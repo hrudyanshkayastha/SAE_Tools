@@ -42,7 +42,11 @@ func main() {
 	fmt.Println("Connected to PostgreSQL and Redis successfully.")
 
 	// 2. Initialize Correlation & AI Engine
-	eng := engine.NewEngine(store)
+	shuffleWebhook := "http://localhost:5001/api/v1/hooks/webhook_sae_action"
+	if w := os.Getenv("SHUFFLE_WEBHOOK_URL"); w != "" {
+		shuffleWebhook = w
+	}
+	eng := engine.NewEngine(store, shuffleWebhook)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	

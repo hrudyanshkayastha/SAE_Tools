@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sae-core/internal/langgraph"
+	"sae-core/internal/shuffle"
 	"sae-core/internal/storage"
 	"sae-core/models"
 	"sync"
@@ -15,7 +16,8 @@ import (
 )
 
 type Engine struct {
-	store *storage.Storage
+	store         *storage.Storage
+	shuffleClient *shuffle.Client
 
 	// Correlation state (in-memory for simple deterministic correlation)
 	correlations map[string]*CorrelationContext
@@ -29,10 +31,11 @@ type CorrelationContext struct {
 	CreatedAt time.Time
 }
 
-func NewEngine(store *storage.Storage) *Engine {
+func NewEngine(store *storage.Storage, shuffleWebhook string) *Engine {
 	return &Engine{
-		store:        store,
-		correlations: make(map[string]*CorrelationContext),
+		store:         store,
+		shuffleClient: shuffle.NewClient(shuffleWebhook),
+		correlations:  make(map[string]*CorrelationContext),
 	}
 }
 
@@ -162,10 +165,42 @@ func (e *Engine) triggerAI(corr *CorrelationContext) {
 	// Policy Engine bounds checking
 	if result.Decision == "block_ip" || result.Decision == "isolate_host" {
 		log.Printf("[POLICY ENGINE] DANGER: LLM recommended highly privileged action: %s. Action blocked. Requiring human authorization.", result.Decision)
-	} else {
-		log.Printf("[POLICY ENGINE] Action %s is within safe bounds.", result.Decision)
+		return
+	}
+	
+	log.Printf("[POLICY ENGINE] Action %s is within safe bounds.", result.Decision)
+	
+	if result.Decision == "monitor" || result.Decision == "none" {
+		log.Printf("[RESPONSE] No active execution required for %s", result.Decision)
+		return
 	}
 
-	// Shuffle Response routing (Simulated blocked due to docker environment constraints described in audit)
-	log.Printf("[RESPONSE] Routing action to Shuffle... [BLOCKED - Docker Orchestrator Unavailable]")
+	log.Printf("[RESPONSE] Routing authorized action %s to Shuffle...", result.Decision)
+	
+	payload := shuffle.ActionPayload{
+		CorrelationID: corr.ID,
+		Action:        result.Decision,
+		Target:        corr.Target,
+	}
+
+	// Wait up to 5 seconds for webhook push
+	execCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = e.shuffleClient.ExecuteWorkflow(execCtx, payload)
+	if err != nil {
+		log.Printf("[RESPONSE] Shuffle execution failed: %v", err)
+		// Send failure event to fabric
+		failEvent := models.OCSFFinding{
+			EventID:      corr.ID + "-fail",
+			CorrelationID: corr.ID,
+			ActivityName: "Response Execution Failed",
+			Severity:     "High",
+			Message:      fmt.Sprintf("Shuffle execution failed for action %s: %v", result.Decision, err),
+		}
+		e.store.PublishEvent(execCtx, failEvent)
+	} else {
+		log.Printf("[RESPONSE] Shuffle workflow successfully triggered for %s", result.Decision)
+		// We expect the consumer to pick up the result and send the OCSF event later.
+	}
 }

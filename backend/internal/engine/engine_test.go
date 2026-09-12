@@ -2,10 +2,16 @@ package engine
 
 import (
 	"testing"
+
 	"sae-core/models"
+	"sae-core/internal/storage"
 )
 
 func TestEngine_Correlate(t *testing.T) {
+	store := &storage.Storage{}
+	eng := NewEngine(store, "http://mock-webhook")
+	_ = eng
+
 	// A simple test to verify correlation struct initialization
 	ctxData := &CorrelationContext{
 		ID:     "CORR-1.2.3.4",
