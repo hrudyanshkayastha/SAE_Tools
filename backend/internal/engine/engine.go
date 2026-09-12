@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -46,7 +47,6 @@ func NewEngine(store *storage.Storage, shuffleWebhook, thehiveURL, cortexURL str
 }
 
 func (e *Engine) Start(ctx context.Context) {
-	// Create consumer group (ignore error if exists)
 	e.store.Redis.XGroupCreateMkStream(ctx, "sae_events", "sae_group", "0")
 
 	for {
@@ -90,7 +90,6 @@ func (e *Engine) processMessage(ctx context.Context, msg redis.XMessage) {
 		return
 	}
 
-	// 2. Correlate
 	e.correlate(ctx, event)
 }
 
@@ -98,7 +97,6 @@ func (e *Engine) correlate(ctx context.Context, event models.OCSFFinding) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	// Extract target (e.g. IP or User) to correlate deterministically
 	var target string
 	for _, obs := range event.Observables {
 		if obs.Type == "IP" || obs.Type == "User" || obs.Type == "Resource" {
@@ -111,7 +109,6 @@ func (e *Engine) correlate(ctx context.Context, event models.OCSFFinding) {
 		target = "UNASSIGNED"
 	}
 
-	// For test isolation, we correlate by target string
 	corrKey := target
 	ctxData, exists := e.correlations[corrKey]
 	if !exists {
@@ -124,28 +121,19 @@ func (e *Engine) correlate(ctx context.Context, event models.OCSFFinding) {
 	}
 
 	ctxData.Events = append(ctxData.Events, event)
-
-	// Update Event with correlation ID and save to ClickHouse Telemetry
 	event.CorrelationID = ctxData.ID
 	e.store.SaveTelemetry(event)
-
-	// Save Correlation state to Postgres
 	e.store.SaveCorrelation(ctxData.ID, ctxData.Target, len(ctxData.Events), event.Severity, "ACTIVE")
 
-	// If we have enough context or a critical event, trigger AI Investigation
 	if event.Severity == "Critical" || event.Severity == "High" {
-		log.Printf("[CORRELATION] Triggering LangGraph AI Investigation for Correlation %s based on High/Critical event", ctxData.ID)
 		e.triggerAI(ctxData)
 	} else if len(ctxData.Events) >= 3 {
-		log.Printf("[CORRELATION] Threshold reached for Correlation %s (3+ events). Triggering AI.", ctxData.ID)
 		e.triggerAI(ctxData)
-		// Reset for demo purposes
 		delete(e.correlations, corrKey)
 	}
 }
 
 func (e *Engine) triggerAI(corr *CorrelationContext) {
-	// Consolidate data for LangGraph
 	summary := fmt.Sprintf("Correlation %s targeting %s with %d events. Latest: %s", corr.ID, corr.Target, len(corr.Events), corr.Events[len(corr.Events)-1].Message)
 
 	eventData, _ := json.Marshal(map[string]string{
@@ -162,80 +150,87 @@ func (e *Engine) triggerAI(corr *CorrelationContext) {
 		return
 	}
 
-	log.Printf("[AI DECISION] Risk Score: %d, Validation: %s, Action: %s", result.RiskScore, result.Validation, result.Decision)
-
-	// Save Decision to Postgres
+	// Save initial Decision to Postgres as REQUESTED
 	e.store.SaveDecision(corr.ID, result.RiskScore, result.Validation, result.Decision)
 	e.store.SaveCorrelation(corr.ID, corr.Target, len(corr.Events), "High", "RESOLVED")
+	e.store.SaveResponseState(corr.ID, "REQUESTED")
 
 	// Policy Engine bounds checking
 	if result.Decision == "block_ip" || result.Decision == "isolate_host" {
-		log.Printf("[POLICY ENGINE] DANGER: LLM recommended highly privileged action: %s. Action blocked. Requiring human authorization.", result.Decision)
+		log.Printf("[POLICY ENGINE] DANGER: LLM recommended highly privileged action: %s. Action blocked.", result.Decision)
+		e.store.SaveResponseState(corr.ID, "REJECTED")
 		return
 	}
 	
-	log.Printf("[POLICY ENGINE] Action %s is within safe bounds.", result.Decision)
+	e.store.SaveResponseState(corr.ID, "AUTHORIZED")
 	
 	if result.Decision == "monitor" || result.Decision == "none" {
-		log.Printf("[RESPONSE] No active execution required for %s", result.Decision)
+		e.store.SaveResponseState(corr.ID, "COMPLETED_NO_ACTION")
 		return
 	}
 
-	log.Printf("[RESPONSE] Routing authorized action %s to Shuffle...", result.Decision)
-	
 	payload := shuffle.ActionPayload{
 		CorrelationID: corr.ID,
 		Action:        result.Decision,
 		Target:        corr.Target,
 	}
 
-	// Case Management & Enrichment
-	log.Printf("[CASE MANAGEMENT] Opening Incident in TheHive for %s...", corr.ID)
-	caseCtx, caseCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer caseCancel()
-	
-	caseID, err := e.thehiveClient.CreateCase(caseCtx, thehive.CasePayload{
-		Title:       fmt.Sprintf("SAE AI Escalation: %s", corr.Target),
-		Description: fmt.Sprintf("AI Score: %d. Recommendation: %s", result.RiskScore, result.Decision),
-		Severity:    3,
-	})
-	if err != nil {
-		log.Printf("[CASE MANAGEMENT] [BLOCKED] TheHive execution failed: %v", err)
-	} else {
-		log.Printf("[CASE MANAGEMENT] Successfully created TheHive Case: %s", caseID)
-		
-		// If case created successfully, run Cortex analysis on the target
-		log.Printf("[THREAT INTEL] Submitting Cortex Job for target: %s", corr.Target)
-		jobID, err := e.cortexClient.SubmitJob(caseCtx, "VirusTotal_GetReport_3_0", cortex.JobPayload{
-			Data:     corr.Target,
-			DataType: "ip",
-			Tlp:      2,
-		})
-		if err != nil {
-			log.Printf("[THREAT INTEL] [BLOCKED] Cortex execution failed: %v", err)
-		} else {
-			log.Printf("[THREAT INTEL] Successfully submitted Cortex Job: %s", jobID)
-		}
-	}
-
-	// Wait up to 5 seconds for webhook push
 	execCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err = e.shuffleClient.ExecuteWorkflow(execCtx, payload)
+	e.store.SaveResponseState(corr.ID, "EXECUTING")
+	execID, err := e.shuffleClient.ExecuteWorkflow(execCtx, payload)
 	if err != nil {
 		log.Printf("[RESPONSE] Shuffle execution failed: %v", err)
-		// Send failure event to fabric
+		e.store.SaveResponseState(corr.ID, "FAILED")
+		
 		failEvent := models.OCSFFinding{
-			EventID:      corr.ID + "-fail",
+			EventID:      uuid.New().String(),
 			CorrelationID: corr.ID,
 			ActivityName: "Response Execution Failed",
 			Severity:     "High",
 			Message:      fmt.Sprintf("Shuffle execution failed for action %s: %v", result.Decision, err),
 		}
-		e.store.PublishEvent(execCtx, failEvent)
-	} else {
-		log.Printf("[RESPONSE] Shuffle workflow successfully triggered for %s", result.Decision)
-		// We expect the consumer to pick up the result and send the OCSF event later.
+		e.store.PublishEvent(context.Background(), failEvent)
+		return
 	}
+
+	// Now independently verify the execution (Closed Loop)
+	log.Printf("[RESPONSE] Polling for action %s verification (ExecID: %s)...", result.Decision, execID)
+	
+	verifyCtx, vCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer vCancel()
+	
+	verifyResult, vErr := e.shuffleClient.CheckStatus(verifyCtx, execID)
+	var finalState string
+	var verifMsg string
+	
+	if vErr != nil {
+		finalState = "VERIFICATION_FAILED"
+		verifMsg = fmt.Sprintf("Failed to verify execution status: %v", vErr)
+	} else if verifyResult.Status == "SUCCEEDED" {
+		finalState = "SUCCEEDED"
+		verifMsg = fmt.Sprintf("Action %s verified successful via Shuffle API", result.Decision)
+	} else if verifyResult.Status == "TIMEOUT" {
+		finalState = "TIMEOUT"
+		verifMsg = "Execution timed out during verification"
+	} else {
+		finalState = "FAILED"
+		verifMsg = fmt.Sprintf("Execution reported failure: %s", verifyResult.Message)
+	}
+
+	e.store.SaveResponseState(corr.ID, finalState)
+	
+	// Generate Verification OCSF Event
+	verifEvent := models.OCSFFinding{
+		EventID:      uuid.New().String(),
+		CorrelationID: corr.ID,
+		ActivityName: "Response Verification",
+		Severity:     "Info",
+		Status:       finalState,
+		Message:      verifMsg,
+		Time:         time.Now(),
+	}
+	verifEvent.Observables = append(verifEvent.Observables, models.Observable{Type: "ExecutionID", Value: execID})
+	e.store.PublishEvent(context.Background(), verifEvent)
 }

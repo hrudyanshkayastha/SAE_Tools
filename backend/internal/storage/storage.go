@@ -19,10 +19,8 @@ type Storage struct {
 }
 
 func InitStorage() (*Storage, error) {
-	// PostgreSQL connection
 	pgDSN := os.Getenv("SAE_PG_DSN")
 	if pgDSN == "" {
-		// Secure default fallback for local dev. Real deployment uses env.
 		pgDSN = "postgres://sae:sae_password@localhost:5432/sae_db?sslmode=disable"
 	}
 	pgDB, err := sql.Open("postgres", pgDSN)
@@ -30,7 +28,6 @@ func InitStorage() (*Storage, error) {
 		return nil, fmt.Errorf("postgres open: %w", err)
 	}
 
-	// Reliability: Connection pooling limits
 	pgDB.SetMaxOpenConns(25)
 	pgDB.SetMaxIdleConns(5)
 	pgDB.SetConnMaxLifetime(5 * time.Minute)
@@ -52,11 +49,14 @@ func InitStorage() (*Storage, error) {
 		risk_score INT,
 		validation TEXT,
 		action VARCHAR,
+		state VARCHAR DEFAULT 'REQUESTED',
 		created_at TIMESTAMP
 	)`)
 	if err != nil {
 		return nil, fmt.Errorf("postgres decisions table init: %w", err)
 	}
+
+	pgDB.Exec("ALTER TABLE decisions ADD COLUMN state VARCHAR DEFAULT 'REQUESTED'")
 
 	_, err = pgDB.Exec(`CREATE TABLE IF NOT EXISTS sae_telemetry (
 		event_id VARCHAR PRIMARY KEY,
@@ -114,5 +114,10 @@ func (s *Storage) SaveCorrelation(corrID string, target string, count int, sever
 func (s *Storage) SaveDecision(corrID string, riskScore int, validation string, action string) error {
 	_, err := s.PG.Exec("INSERT INTO decisions (correlation_id, risk_score, validation, action, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (correlation_id) DO UPDATE SET risk_score = EXCLUDED.risk_score, validation = EXCLUDED.validation, action = EXCLUDED.action",
 		corrID, riskScore, validation, action, time.Now())
+	return err
+}
+
+func (s *Storage) SaveResponseState(corrID string, state string) error {
+	_, err := s.PG.Exec("UPDATE decisions SET state = $1 WHERE correlation_id = $2", state, corrID)
 	return err
 }
