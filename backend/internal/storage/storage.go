@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sae-core/models"
 	"time"
 
@@ -19,11 +20,20 @@ type Storage struct {
 
 func InitStorage() (*Storage, error) {
 	// PostgreSQL connection
-	pgConnStr := "postgres://sae:sae_password@localhost:5432/sae_db?sslmode=disable"
-	pgDB, err := sql.Open("postgres", pgConnStr)
+	pgDSN := os.Getenv("SAE_PG_DSN")
+	if pgDSN == "" {
+		// Secure default fallback for local dev. Real deployment uses env.
+		pgDSN = "postgres://sae:sae_password@localhost:5432/sae_db?sslmode=disable"
+	}
+	pgDB, err := sql.Open("postgres", pgDSN)
 	if err != nil {
 		return nil, fmt.Errorf("postgres open: %w", err)
 	}
+
+	// Reliability: Connection pooling limits
+	pgDB.SetMaxOpenConns(25)
+	pgDB.SetMaxIdleConns(5)
+	pgDB.SetConnMaxLifetime(5 * time.Minute)
 
 	_, err = pgDB.Exec(`CREATE TABLE IF NOT EXISTS correlations (
 		correlation_id VARCHAR PRIMARY KEY,
@@ -61,8 +71,15 @@ func InitStorage() (*Storage, error) {
 		return nil, fmt.Errorf("postgres init table: %w", err)
 	}
 
+	redisAddr := os.Getenv("SAE_REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
 	rdb := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
+		Addr: redisAddr,
+		DialTimeout: 5 * time.Second,
+		ReadTimeout: 3 * time.Second,
+		WriteTimeout: 3 * time.Second,
 	})
 	
 	err = rdb.Ping(context.Background()).Err()
