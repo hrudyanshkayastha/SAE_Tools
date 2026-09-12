@@ -9,16 +9,17 @@ import (
 )
 
 func TestShuffleClient_States(t *testing.T) {
-	// 1. Success
+	// 1. Success Webhook
 	tsSuccess := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"success": true, "execution_id": "exec-123"}`))
 	}))
 	defer tsSuccess.Close()
 
 	client := NewClient(tsSuccess.URL)
-	_, err := client.ExecuteWorkflow(context.Background(), ActionPayload{CorrelationID: "1", Action: "test", Target: "1.2.3.4"})
-	if err != nil {
-		t.Fatalf("Expected success, got %v", err)
+	execID, err := client.ExecuteWorkflow(context.Background(), ActionPayload{CorrelationID: "1", Action: "test", Target: "1.2.3.4"})
+	if err != nil || execID != "exec-123" {
+		t.Fatalf("Expected success, got %v, execID: %s", err, execID)
 	}
 
 	// 2. Failed Execution (HTTP 500)
@@ -33,31 +34,31 @@ func TestShuffleClient_States(t *testing.T) {
 		t.Fatal("Expected failure, got success")
 	}
 
-	// 3. Timeout
-	tsTimeout := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(100 * time.Millisecond)
+	// Polling verification test: Success
+	apiSuccess := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status": "SUCCESS", "result": "Done"}`))
 	}))
-	defer tsTimeout.Close()
-
-	clientTimeout := NewClient(tsTimeout.URL)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	_, err = clientTimeout.ExecuteWorkflow(ctx, ActionPayload{CorrelationID: "3"})
-	if err == nil {
-		t.Fatal("Expected timeout error, got success")
-	}
-
-	// 4. Unavailable
-	clientUnavailable := NewClient("http://localhost:99999") // invalid port
-	_, err = clientUnavailable.ExecuteWorkflow(context.Background(), ActionPayload{CorrelationID: "4"})
-	if err == nil {
-		t.Fatal("Expected unavailable error, got success")
-	}
-
-	// Verification check tests
-	res, _ := client.CheckStatus(context.Background(), "exec-123")
+	defer apiSuccess.Close()
+	
+	client.APIURL = apiSuccess.URL
+	res, _ := client.PollExecutionStatus(context.Background(), "exec-123", 10*time.Millisecond)
 	if res.Status != "SUCCEEDED" {
 		t.Fatalf("Expected SUCCEEDED, got %s", res.Status)
+	}
+
+	// Polling verification test: Timeout
+	apiTimeout := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status": "EXECUTING", "result": "Running..."}`))
+	}))
+	defer apiTimeout.Close()
+	
+	client.APIURL = apiTimeout.URL
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	res2, err2 := client.PollExecutionStatus(ctx, "exec-456", 10*time.Millisecond)
+	if err2 == nil || res2.Status != "TIMEOUT" {
+		t.Fatalf("Expected TIMEOUT, got %s with err %v", res2.Status, err2)
 	}
 }

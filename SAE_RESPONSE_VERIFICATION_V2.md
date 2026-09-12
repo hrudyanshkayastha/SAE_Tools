@@ -32,11 +32,12 @@ The `shuffle_response_test.go` isolation suite covers 7 critical execution state
 - 192/192 comprehensive backend tests passing.
 
 ## 5. Real Runtime Evidence & Limitations
-While the pipeline and state machine are natively executed in Go and Postgres, the physical execution of a live Shuffle workflow cannot be established natively in this Windows sandbox. 
-- **Missing Link:** A live Shuffle SOAR container with active `/api/v1/workflows/{id}/executions` polling endpoints to capture genuine downstream webhook payloads and return dynamic status strings.
-- Synthetic polling strings were utilized to test the Go boundaries, which explicitly disqualifies this from a "Runtime Verified" status under SAE's strict evidence rules.
+The backend Go logic has been entirely refactored to poll the physical Shuffle API for execution verification via `GET /api/v1/executions/{id}`.
+- Simulated `uuid.New()` stubs and fake `SUCCEEDED` fallbacks were explicitly removed.
+- **Missing Link:** A live Shuffle SOAR container active locally. Because the local sandbox lacks this physical infrastructure, real `ActionResult` JSON bodies cannot be parsed natively in a live E2E run.
+- Tests securely mock the Shuffle HTTP routes, which proves the polling boundaries are fault-tolerant, but this explicitly disqualifies the integration from a "Runtime Verified" status.
 
 ## 6. Final Component Status
-Because genuine real-world closed-loop integration could not be demonstrated in the test sandbox:
+Because genuine real-world closed-loop integration could not be demonstrated against a physical container in this test sandbox:
 
 **Response Verification: PARTIAL**

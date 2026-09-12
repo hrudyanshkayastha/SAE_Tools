@@ -198,22 +198,22 @@ func (e *Engine) triggerAI(corr *CorrelationContext) {
 	// Now independently verify the execution (Closed Loop)
 	log.Printf("[RESPONSE] Polling for action %s verification (ExecID: %s)...", result.Decision, execID)
 	
-	verifyCtx, vCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	verifyCtx, vCancel := context.WithTimeout(context.Background(), 10*time.Second) // 10 second bounded polling window
 	defer vCancel()
 	
-	verifyResult, vErr := e.shuffleClient.CheckStatus(verifyCtx, execID)
+	verifyResult, vErr := e.shuffleClient.PollExecutionStatus(verifyCtx, execID, 2*time.Second) // Poll every 2 seconds
 	var finalState string
 	var verifMsg string
 	
-	if vErr != nil {
+	if vErr != nil && verifyResult.Status == "TIMEOUT" {
+		finalState = "TIMEOUT"
+		verifMsg = "Execution timed out during verification"
+	} else if vErr != nil {
 		finalState = "VERIFICATION_FAILED"
 		verifMsg = fmt.Sprintf("Failed to verify execution status: %v", vErr)
 	} else if verifyResult.Status == "SUCCEEDED" {
 		finalState = "SUCCEEDED"
 		verifMsg = fmt.Sprintf("Action %s verified successful via Shuffle API", result.Decision)
-	} else if verifyResult.Status == "TIMEOUT" {
-		finalState = "TIMEOUT"
-		verifMsg = "Execution timed out during verification"
 	} else {
 		finalState = "FAILED"
 		verifMsg = fmt.Sprintf("Execution reported failure: %s", verifyResult.Message)
