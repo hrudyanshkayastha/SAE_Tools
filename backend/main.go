@@ -12,6 +12,7 @@ import (
 	"sae-core/internal/api"
 	"sae-core/internal/engine"
 	"sae-core/internal/storage"
+	"sae-core/internal/ueba"
 
 	"sae-core/internal/cortex"
 	"sae-core/internal/falco"
@@ -47,6 +48,11 @@ func main() {
 	
 	go eng.Start(ctx)
 	fmt.Println("Correlation Engine & AI Pipeline started.")
+
+	// 2.5 Start UEBA Engine
+	uebaEng := ueba.NewUEBAEngine(store)
+	go uebaEng.Start(ctx, 1*time.Minute)
+	fmt.Println("UEBA Behavioral Analytics Engine started.")
 
 	// 3. Initialize REST API
 	server := api.NewServer(store)
