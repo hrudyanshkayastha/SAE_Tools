@@ -8,6 +8,8 @@ import (
 	"sae-core/internal/langgraph"
 	"sae-core/internal/shuffle"
 	"sae-core/internal/storage"
+	"sae-core/internal/thehive"
+	"sae-core/internal/cortex"
 	"sae-core/models"
 	"sync"
 	"time"
@@ -18,6 +20,8 @@ import (
 type Engine struct {
 	store         *storage.Storage
 	shuffleClient *shuffle.Client
+	thehiveClient *thehive.Client
+	cortexClient  *cortex.Client
 
 	// Correlation state (in-memory for simple deterministic correlation)
 	correlations map[string]*CorrelationContext
@@ -31,10 +35,12 @@ type CorrelationContext struct {
 	CreatedAt time.Time
 }
 
-func NewEngine(store *storage.Storage, shuffleWebhook string) *Engine {
+func NewEngine(store *storage.Storage, shuffleWebhook, thehiveURL, cortexURL string) *Engine {
 	return &Engine{
 		store:         store,
 		shuffleClient: shuffle.NewClient(shuffleWebhook),
+		thehiveClient: thehive.NewClient(thehiveURL, "mock-api-key"),
+		cortexClient:  cortex.NewClient(cortexURL, "mock-api-key"),
 		correlations:  make(map[string]*CorrelationContext),
 	}
 }
@@ -181,6 +187,35 @@ func (e *Engine) triggerAI(corr *CorrelationContext) {
 		CorrelationID: corr.ID,
 		Action:        result.Decision,
 		Target:        corr.Target,
+	}
+
+	// Case Management & Enrichment
+	log.Printf("[CASE MANAGEMENT] Opening Incident in TheHive for %s...", corr.ID)
+	caseCtx, caseCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer caseCancel()
+	
+	caseID, err := e.thehiveClient.CreateCase(caseCtx, thehive.CasePayload{
+		Title:       fmt.Sprintf("SAE AI Escalation: %s", corr.Target),
+		Description: fmt.Sprintf("AI Score: %d. Recommendation: %s", result.RiskScore, result.Decision),
+		Severity:    3,
+	})
+	if err != nil {
+		log.Printf("[CASE MANAGEMENT] [BLOCKED] TheHive execution failed: %v", err)
+	} else {
+		log.Printf("[CASE MANAGEMENT] Successfully created TheHive Case: %s", caseID)
+		
+		// If case created successfully, run Cortex analysis on the target
+		log.Printf("[THREAT INTEL] Submitting Cortex Job for target: %s", corr.Target)
+		jobID, err := e.cortexClient.SubmitJob(caseCtx, "VirusTotal_GetReport_3_0", cortex.JobPayload{
+			Data:     corr.Target,
+			DataType: "ip",
+			Tlp:      2,
+		})
+		if err != nil {
+			log.Printf("[THREAT INTEL] [BLOCKED] Cortex execution failed: %v", err)
+		} else {
+			log.Printf("[THREAT INTEL] Successfully submitted Cortex Job: %s", jobID)
+		}
 	}
 
 	// Wait up to 5 seconds for webhook push

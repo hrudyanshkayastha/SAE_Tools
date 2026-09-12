@@ -46,7 +46,9 @@ func main() {
 	if w := os.Getenv("SHUFFLE_WEBHOOK_URL"); w != "" {
 		shuffleWebhook = w
 	}
-	eng := engine.NewEngine(store, shuffleWebhook)
+	thehiveURL := "http://localhost:9000"
+	cortexURL := "http://localhost:9001"
+	eng := engine.NewEngine(store, shuffleWebhook, thehiveURL, cortexURL)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	
