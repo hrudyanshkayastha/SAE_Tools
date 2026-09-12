@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    restart: always
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: sae
+      POSTGRES_PASSWORD: sae_password
+      POSTGRES_DB: sae_db
+    ports:
+      - "5432:5432"
+    restart: always
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: 
+      CLICKHOUSE_DB: sae_telemetry
+    restart: always

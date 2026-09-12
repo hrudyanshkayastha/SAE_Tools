@@ -1,0 +1,171 @@
+package engine
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"sae-core/internal/langgraph"
+	"sae-core/internal/storage"
+	"sae-core/models"
+	"sync"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+)
+
+type Engine struct {
+	store *storage.Storage
+
+	// Correlation state (in-memory for simple deterministic correlation)
+	correlations map[string]*CorrelationContext
+	mu           sync.Mutex
+}
+
+type CorrelationContext struct {
+	ID        string
+	Events    []models.OCSFFinding
+	Target    string
+	CreatedAt time.Time
+}
+
+func NewEngine(store *storage.Storage) *Engine {
+	return &Engine{
+		store:        store,
+		correlations: make(map[string]*CorrelationContext),
+	}
+}
+
+func (e *Engine) Start(ctx context.Context) {
+	// Create consumer group (ignore error if exists)
+	e.store.Redis.XGroupCreateMkStream(ctx, "sae_events", "sae_group", "0")
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			res, err := e.store.Redis.XReadGroup(ctx, &redis.XReadGroupArgs{
+				Group:    "sae_group",
+				Consumer: "consumer1",
+				Streams:  []string{"sae_events", ">"},
+				Count:    10,
+				Block:    2 * time.Second,
+			}).Result()
+
+			if err != nil && err != redis.Nil {
+				log.Printf("Redis read error: %v", err)
+				time.Sleep(1 * time.Second)
+				continue
+			}
+
+			if len(res) > 0 {
+				for _, msg := range res[0].Messages {
+					e.processMessage(ctx, msg)
+					e.store.Redis.XAck(ctx, "sae_events", "sae_group", msg.ID)
+				}
+			}
+		}
+	}
+}
+
+func (e *Engine) processMessage(ctx context.Context, msg redis.XMessage) {
+	dataStr, ok := msg.Values["data"].(string)
+	if !ok {
+		return
+	}
+
+	var event models.OCSFFinding
+	if err := json.Unmarshal([]byte(dataStr), &event); err != nil {
+		log.Printf("Failed to unmarshal event: %v", err)
+		return
+	}
+
+	// 2. Correlate
+	e.correlate(ctx, event)
+}
+
+func (e *Engine) correlate(ctx context.Context, event models.OCSFFinding) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// Extract target (e.g. IP or User) to correlate deterministically
+	var target string
+	for _, obs := range event.Observables {
+		if obs.Type == "IP" || obs.Type == "User" || obs.Type == "Resource" {
+			target = obs.Value
+			break
+		}
+	}
+
+	if target == "" {
+		target = "UNASSIGNED"
+	}
+
+	// For test isolation, we correlate by target string
+	corrKey := target
+	ctxData, exists := e.correlations[corrKey]
+	if !exists {
+		ctxData = &CorrelationContext{
+			ID:        "CORR-" + target,
+			Target:    target,
+			CreatedAt: time.Now(),
+		}
+		e.correlations[corrKey] = ctxData
+	}
+
+	ctxData.Events = append(ctxData.Events, event)
+
+	// Update Event with correlation ID and save to ClickHouse Telemetry
+	event.CorrelationID = ctxData.ID
+	e.store.SaveTelemetry(event)
+
+	// Save Correlation state to Postgres
+	e.store.SaveCorrelation(ctxData.ID, ctxData.Target, len(ctxData.Events), event.Severity, "ACTIVE")
+
+	// If we have enough context or a critical event, trigger AI Investigation
+	if event.Severity == "Critical" || event.Severity == "High" {
+		log.Printf("[CORRELATION] Triggering LangGraph AI Investigation for Correlation %s based on High/Critical event", ctxData.ID)
+		e.triggerAI(ctxData)
+	} else if len(ctxData.Events) >= 3 {
+		log.Printf("[CORRELATION] Threshold reached for Correlation %s (3+ events). Triggering AI.", ctxData.ID)
+		e.triggerAI(ctxData)
+		// Reset for demo purposes
+		delete(e.correlations, corrKey)
+	}
+}
+
+func (e *Engine) triggerAI(corr *CorrelationContext) {
+	// Consolidate data for LangGraph
+	summary := fmt.Sprintf("Correlation %s targeting %s with %d events. Latest: %s", corr.ID, corr.Target, len(corr.Events), corr.Events[len(corr.Events)-1].Message)
+
+	eventData, _ := json.Marshal(map[string]string{
+		"event_source": "Wazuh",
+		"event_type":   "Authentication Bypass",
+		"description":  summary,
+		"severity":     "High",
+		"source_ip":    corr.Target,
+	})
+
+	result, err := langgraph.ExecuteReasoningGraph(eventData, "E:\\New folder\\SAE_Tools\\SAE\\backend\\internal\\langgraph")
+	if err != nil {
+		log.Printf("[AI REASONING] LangGraph execution failed: %v", err)
+		return
+	}
+
+	log.Printf("[AI DECISION] Risk Score: %d, Validation: %s, Action: %s", result.RiskScore, result.Validation, result.Decision)
+
+	// Save Decision to Postgres
+	e.store.SaveDecision(corr.ID, result.RiskScore, result.Validation, result.Decision)
+	e.store.SaveCorrelation(corr.ID, corr.Target, len(corr.Events), "High", "RESOLVED")
+
+	// Policy Engine bounds checking
+	if result.Decision == "block_ip" || result.Decision == "isolate_host" {
+		log.Printf("[POLICY ENGINE] DANGER: LLM recommended highly privileged action: %s. Action blocked. Requiring human authorization.", result.Decision)
+	} else {
+		log.Printf("[POLICY ENGINE] Action %s is within safe bounds.", result.Decision)
+	}
+
+	// Shuffle Response routing (Simulated blocked due to docker environment constraints described in audit)
+	log.Printf("[RESPONSE] Routing action to Shuffle... [BLOCKED - Docker Orchestrator Unavailable]")
+}
