@@ -35,9 +35,10 @@ func (u *UEBAEngine) Start(ctx context.Context, interval time.Duration) {
 }
 
 type EntityStat struct {
-	Type  string
-	Value string
-	Buckets map[int64]int // Unix minute -> count
+	Type      string
+	Value     string
+	Buckets   map[int64]int // Unix minute -> count
+	RiskScore int
 }
 
 func (u *UEBAEngine) analyzeBehavior(ctx context.Context) {
@@ -85,7 +86,7 @@ func (u *UEBAEngine) analyzeBehavior(ctx context.Context) {
 		isAnomaly, mean, stddev := EvaluateDeviation(stat, currentMinute)
 		if isAnomaly {
 			currentCount := stat.Buckets[currentMinute]
-			log.Printf("[UEBA] ANOMALY DETECTED for %s %s: %d events this minute (Baseline Mean: %.2f, StdDev: %.2f)", stat.Type, stat.Value, currentCount, mean, stddev)
+			log.Printf("[UEBA v2] ANOMALY DETECTED for %s %s: %d events this minute. Risk Score: %d (Baseline Mean: %.2f, StdDev: %.2f)", stat.Type, stat.Value, currentCount, stat.RiskScore, mean, stddev)
 			
 			// Publish anomaly to the Event Fabric
 			anomaly := models.OCSFFinding{
@@ -94,13 +95,13 @@ func (u *UEBAEngine) analyzeBehavior(ctx context.Context) {
 				Time:          time.Now(),
 				Severity:      "High",
 				Status:        "New",
-				Message:       fmt.Sprintf("Behavioral deviation detected for %s %s. Event rate spike: %d/min (Historical mean: %.2f/min, Stddev: %.2f)", stat.Type, stat.Value, currentCount, mean, stddev),
+				Message:       fmt.Sprintf("Behavioral deviation detected for %s %s. Event rate spike: %d/min. Risk Score: %d", stat.Type, stat.Value, currentCount, stat.RiskScore),
 			}
 			anomaly.Observables = append(anomaly.Observables, models.Observable{
 				Type:  stat.Type,
 				Value: stat.Value,
 			})
-			anomaly.Metadata.Product = "SAE UEBA Engine"
+			anomaly.Metadata.Product = "SAE UEBA Engine v2"
 			
 			u.store.PublishEvent(ctx, anomaly)
 		}
@@ -109,40 +110,48 @@ func (u *UEBAEngine) analyzeBehavior(ctx context.Context) {
 
 // EvaluateDeviation calculates baseline and returns true if the current minute is an anomaly.
 func EvaluateDeviation(stat *EntityStat, currentMinute int64) (bool, float64, float64) {
-	var total int
-	var historicalBuckets int
-	
-	for ts, count := range stat.Buckets {
-		if ts < currentMinute {
-			total += count
-			historicalBuckets++
+	var sum int
+	var count int
+	for t, c := range stat.Buckets {
+		if t != currentMinute {
+			sum += c
+			count++
 		}
 	}
 
-	// Require at least 3 minutes of history to establish a baseline
-	if historicalBuckets < 3 {
+	if count < 3 {
 		return false, 0, 0
 	}
 
-	mean := float64(total) / float64(historicalBuckets)
-
-	var varianceSum float64
-	for ts, count := range stat.Buckets {
-		if ts < currentMinute {
-			varianceSum += math.Pow(float64(count)-mean, 2)
+	mean := float64(sum) / float64(count)
+	
+	var variance float64
+	for t, c := range stat.Buckets {
+		if t != currentMinute {
+			diff := float64(c) - mean
+			variance += diff * diff
 		}
 	}
-	variance := varianceSum / float64(historicalBuckets)
+	variance = variance / float64(count)
 	stddev := math.Sqrt(variance)
 
 	currentCount := stat.Buckets[currentMinute]
 
-	// Threshold: count must be > mean + 2*stddev, and absolute count >= 5 to avoid low-volume noise
-	threshold := mean + (2 * stddev)
-	
-	if float64(currentCount) > threshold && currentCount >= 5 {
-		return true, mean, stddev
+	// Threshold: Mean + 3 standard deviations (or at least 5 absolute events to avoid low-volume noise)
+	threshold := mean + (3 * stddev)
+	if threshold < 5 {
+		threshold = 5
 	}
-	
-	return false, mean, stddev
+
+	isDeviation := float64(currentCount) > threshold
+
+	// UEBA v2: Calculate Risk Magnitude (1-100)
+	if isDeviation {
+		magnitude := (float64(currentCount) - mean) / stddev
+		stat.RiskScore = int(math.Min(100, magnitude * 10))
+	} else {
+		stat.RiskScore = 0
+	}
+
+	return isDeviation, mean, stddev
 }
