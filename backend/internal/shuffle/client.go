@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -17,10 +18,13 @@ type Client struct {
 }
 
 func NewClient(webhookURL string) *Client {
+	apiURL := os.Getenv("SAE_SHUFFLE_API_URL")
+	authToken := os.Getenv("SAE_SHUFFLE_AUTH_TOKEN")
+	
 	return &Client{
 		WebhookURL: webhookURL,
-		APIURL:     "http://localhost:5001/api/v1", // Default local Shuffle API
-		AuthToken:  "mock-auth-token",
+		APIURL:     apiURL,
+		AuthToken:  authToken,
 		HTTPClient: &http.Client{Timeout: 5 * time.Second},
 	}
 }
@@ -82,6 +86,10 @@ func (c *Client) ExecuteWorkflow(ctx context.Context, payload ActionPayload) (st
 }
 
 func (c *Client) CheckStatus(ctx context.Context, executionID string) (ExecutionResult, error) {
+	if c.APIURL == "" || c.AuthToken == "" {
+		return ExecutionResult{Status: "VERIFICATION_FAILED"}, fmt.Errorf("shuffle API configuration missing (SAE_SHUFFLE_API_URL / SAE_SHUFFLE_AUTH_TOKEN)")
+	}
+
 	url := fmt.Sprintf("%s/executions/%s", c.APIURL, executionID)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -124,6 +132,10 @@ func (c *Client) CheckStatus(ctx context.Context, executionID string) (Execution
 }
 
 func (c *Client) PollExecutionStatus(ctx context.Context, executionID string, interval time.Duration) (ExecutionResult, error) {
+	if c.APIURL == "" || c.AuthToken == "" {
+		return ExecutionResult{ExecutionID: executionID, Status: "VERIFICATION_FAILED", Message: "Missing SAE_SHUFFLE_API_URL or SAE_SHUFFLE_AUTH_TOKEN"}, fmt.Errorf("missing config")
+	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 

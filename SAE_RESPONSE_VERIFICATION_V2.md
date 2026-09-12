@@ -34,10 +34,10 @@ The `shuffle_response_test.go` isolation suite covers 7 critical execution state
 ## 5. Real Runtime Evidence & Limitations
 The backend Go logic has been entirely refactored to poll the physical Shuffle API for execution verification via `GET /api/v1/executions/{id}`.
 - Simulated `uuid.New()` stubs and fake `SUCCEEDED` fallbacks were explicitly removed.
-- **Missing Link:** A live Shuffle SOAR container active locally. Because the local sandbox lacks this physical infrastructure, real `ActionResult` JSON bodies cannot be parsed natively in a live E2E run.
-- Tests securely mock the Shuffle HTTP routes, which proves the polling boundaries are fault-tolerant, but this explicitly disqualifies the integration from a "Runtime Verified" status.
+- Tests securely mock the Shuffle HTTP routes, proving the polling boundaries are fault-tolerant.
+- **Infrastructure Blocker:** We successfully restored and started the `shuffle` Docker-compose stack natively on the sandbox, achieving a `200 OK` connection to the `shuffle-backend` on port `5001`. However, a pre-provisioned Admin API Key (`SAE_SHUFFLE_AUTH_TOKEN`) and an active Webhook Endpoint (`SAE_SHUFFLE_API_URL`) do not exist. Automating the initial frontend UI setup to generate these credentials without a browser is impossible in this environment. As such, real `ActionResult` JSON payloads could not be captured, explicitly disqualifying the integration from a "Runtime Verified" status.
 
 ## 6. Final Component Status
-Because genuine real-world closed-loop integration could not be demonstrated against a physical container in this test sandbox:
+Because a genuine, authenticated real-world closed-loop integration could not be demonstrated against the container in this test sandbox:
 
 **Response Verification: PARTIAL**
