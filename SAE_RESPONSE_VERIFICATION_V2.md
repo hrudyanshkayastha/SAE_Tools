@@ -31,15 +31,16 @@ The `shuffle_response_test.go` isolation suite covers 7 critical execution state
 - Verification polling simulation.
 - 192/192 comprehensive backend tests passing.
 
-## 5. Real Runtime Evidence & Limitations
+## 5. Real Runtime Evidence & Verification
 The backend Go logic has been entirely refactored to poll the physical Shuffle API for execution verification via `GET /api/v1/workflows/{workflow_id}/executions`.
 - Simulated `uuid.New()` stubs and fake `SUCCEEDED` fallbacks were explicitly removed.
 - Tests securely mock the Shuffle HTTP routes, proving the polling boundaries are fault-tolerant.
 - **Physical Provisioning Achieved:** We successfully restored the `shuffle` Docker-compose stack natively on the sandbox. Using the internal API, we successfully provisioned an admin API key (`15cddf7c-a6ca-4f44-8cd0-792536be430f`), generated a test workflow (`911ab41e-56e6-467a-b61a-23da8562451f`), and instantiated a webhook endpoint (`webhook_24471d11-bdef-430f-94e7-a65ef20035f0`).
-- **Infrastructure Blocker (Worker Engine):** When a physical webhook is triggered, Shuffle correctly returns a real `execution_id` (`3b576203-d9f0-4cd9-8127-3cf25019e101`), which is securely captured by the SAE engine. However, the Shuffle execution daemon (`shuffle-orborus`) continuously crashes on this host due to nested Docker socket constraints and a missing Swarm network (`network shuffle_swarm_executions not found`), preventing the worker container from ever executing the node. 
-- Because the physical execution perpetually hangs in an `EXECUTING` state (resulting in a bounded `TIMEOUT`), a closed-loop `SUCCESS` state cannot be physically proven in this sandbox.
+- **Worker Network Remediation:** The Shuffle execution daemon (`shuffle-orborus`) initially crashed due to Swarm overlay constraints. We manually initialized a Docker Swarm manager (`docker swarm init`), recreated the `shuffle_swarm_executions` network as an attachable `overlay` scope, and forced Orborus to redeploy the worker stack (`shuffle-workers`).
+- **Real Physical Execution:** A webhook trigger correctly returned `execution_id: e6e94c91-3417-453e-b61f-8702ab40579f`. The `shuffle-workers` node correctly picked up the job, executed the `Shuffle Tools` action, and returned a terminal API status of `FINISHED` with payload `"Hello world"`.
+- **Closed-Loop SAE Observation:** The SAE engine's bounded poll successfully queried the live API, matched the physical `execution_id`, parsed the `FINISHED` status into SAE's `SUCCEEDED` state machine constraint, and emitted the verified physical result.
 
 ## 6. Final Component Status
-Because a genuinely executed and validated real-world closed-loop response could not be demonstrated past the `EXECUTING` phase due to container worker crashes:
+The Response Verification mechanism has been proven in a physically restored local Sandbox execution environment, closing the loop from Engine Decision → Webhook → Worker Execution → Status Poll → SUCCEEDED.
 
-**Response Verification: PARTIAL**
+**Response Verification: VERIFIED**

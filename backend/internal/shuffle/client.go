@@ -133,7 +133,7 @@ func (c *Client) CheckStatus(ctx context.Context, executionID string) (Execution
 
 	var mappedStatus string
 	switch foundExec.Status {
-	case "SUCCESS":
+	case "SUCCESS", "FINISHED":
 		mappedStatus = "SUCCEEDED"
 	case "FAILURE":
 		mappedStatus = "FAILED"
