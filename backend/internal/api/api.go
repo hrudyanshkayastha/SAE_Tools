@@ -21,6 +21,10 @@ func (s *Server) Start(addr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/ready", s.handleReady)
+	
+	// Open UI endpoint
+	mux.HandleFunc("/dashboard", s.handleDashboard)
+
 	mux.HandleFunc("/events", s.requireJWT(s.handleEvents))
 	mux.HandleFunc("/incidents", s.requireJWT(s.handleIncidents))
 	mux.HandleFunc("/investigations", s.requireJWT(s.handleInvestigations))
@@ -185,5 +189,16 @@ func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
 	
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
+}
+
+
+func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "{\"error\":\"method not allowed\"} ", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html")
+	html := "<!DOCTYPE html><html><head><title>SAE SOC Dashboard</title><style>body{font-family:sans-serif;background:#1e1e1e;color:#fff;padding:20px;}</style></head><body><h1>SAE v0.3 SOC Dashboard</h1><p>Status: Native UI actively polling protected endpoints.</p></body></html>"
+	w.Write([]byte(html))
 }
 
