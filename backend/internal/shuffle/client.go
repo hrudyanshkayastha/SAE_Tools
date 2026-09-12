@@ -14,17 +14,20 @@ type Client struct {
 	WebhookURL string
 	APIURL     string
 	AuthToken  string
+	WorkflowID string
 	HTTPClient *http.Client
 }
 
 func NewClient(webhookURL string) *Client {
 	apiURL := os.Getenv("SAE_SHUFFLE_API_URL")
 	authToken := os.Getenv("SAE_SHUFFLE_AUTH_TOKEN")
+	workflowID := os.Getenv("SAE_SHUFFLE_WORKFLOW_ID")
 	
 	return &Client{
 		WebhookURL: webhookURL,
 		APIURL:     apiURL,
 		AuthToken:  authToken,
+		WorkflowID: workflowID,
 		HTTPClient: &http.Client{Timeout: 5 * time.Second},
 	}
 }
@@ -47,8 +50,9 @@ type WebhookResponse struct {
 }
 
 type APIStatusResponse struct {
-	Status string `json:"status"`
-	Result string `json:"result"`
+	ExecutionId string `json:"execution_id"`
+	Status      string `json:"status"`
+	Result      string `json:"result"`
 }
 
 func (c *Client) ExecuteWorkflow(ctx context.Context, payload ActionPayload) (string, error) {
@@ -87,10 +91,13 @@ func (c *Client) ExecuteWorkflow(ctx context.Context, payload ActionPayload) (st
 
 func (c *Client) CheckStatus(ctx context.Context, executionID string) (ExecutionResult, error) {
 	if c.APIURL == "" || c.AuthToken == "" {
-		return ExecutionResult{Status: "VERIFICATION_FAILED"}, fmt.Errorf("shuffle API configuration missing (SAE_SHUFFLE_API_URL / SAE_SHUFFLE_AUTH_TOKEN)")
+		return ExecutionResult{Status: "VERIFICATION_FAILED"}, fmt.Errorf("shuffle API configuration missing")
+	}
+	if c.WorkflowID == "" {
+		return ExecutionResult{Status: "VERIFICATION_FAILED"}, fmt.Errorf("missing SAE_SHUFFLE_WORKFLOW_ID")
 	}
 
-	url := fmt.Sprintf("%s/executions/%s", c.APIURL, executionID)
+	url := fmt.Sprintf("%s/workflows/%s/executions", c.APIURL, c.WorkflowID)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return ExecutionResult{Status: "VERIFICATION_FAILED"}, err
@@ -107,13 +114,25 @@ func (c *Client) CheckStatus(ctx context.Context, executionID string) (Execution
 		return ExecutionResult{Status: "VERIFICATION_FAILED"}, fmt.Errorf("API returned HTTP %d", resp.StatusCode)
 	}
 
-	var apiResp APIStatusResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+	var executions []APIStatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&executions); err != nil {
 		return ExecutionResult{Status: "VERIFICATION_FAILED"}, fmt.Errorf("failed to parse API response: %w", err)
 	}
 
+	var foundExec *APIStatusResponse
+	for _, exec := range executions {
+		if exec.ExecutionId == executionID {
+			foundExec = &exec
+			break
+		}
+	}
+
+	if foundExec == nil {
+		return ExecutionResult{Status: "VERIFICATION_FAILED"}, fmt.Errorf("execution %s not found in workflow history", executionID)
+	}
+
 	var mappedStatus string
-	switch apiResp.Status {
+	switch foundExec.Status {
 	case "SUCCESS":
 		mappedStatus = "SUCCEEDED"
 	case "FAILURE":
@@ -127,13 +146,13 @@ func (c *Client) CheckStatus(ctx context.Context, executionID string) (Execution
 	return ExecutionResult{
 		ExecutionID: executionID,
 		Status:      mappedStatus,
-		Message:     apiResp.Result,
+		Message:     foundExec.Result,
 	}, nil
 }
 
 func (c *Client) PollExecutionStatus(ctx context.Context, executionID string, interval time.Duration) (ExecutionResult, error) {
-	if c.APIURL == "" || c.AuthToken == "" {
-		return ExecutionResult{ExecutionID: executionID, Status: "VERIFICATION_FAILED", Message: "Missing SAE_SHUFFLE_API_URL or SAE_SHUFFLE_AUTH_TOKEN"}, fmt.Errorf("missing config")
+	if c.APIURL == "" || c.AuthToken == "" || c.WorkflowID == "" {
+		return ExecutionResult{ExecutionID: executionID, Status: "VERIFICATION_FAILED", Message: "Missing SAE_SHUFFLE config"}, fmt.Errorf("missing config")
 	}
 
 	ticker := time.NewTicker(interval)
