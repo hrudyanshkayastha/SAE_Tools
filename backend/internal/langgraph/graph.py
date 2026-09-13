@@ -19,11 +19,28 @@ def node_context(state: GraphState):
 def node_investigate(state: GraphState):
     # Call the local Ollama LLM API directly (SAE Local AI Runtime)
     event_str = json.dumps(state["event"])
-    prompt = f"Analyze this security event and output JSON with keys 'recommendation' and 'severity' (Info, Low, Medium, High, Critical). Event: {event_str}"
+    prompt = (
+        "Analyze this security event and output ONLY a JSON object. "
+        "The JSON object MUST contain exactly two keys: 'recommendation' (string explaining what to do) and 'severity' (string exactly one of: Info, Low, Medium, High, Critical). "
+        "Severity Rubric:\n"
+        "- Info: Benign, administrative tasks, or nonsense/test logs.\n"
+        "- Low: Routine authorized actions.\n"
+        "- Medium: Suspicious unconfirmed activity.\n"
+        "- High: Confirmed attacks or policy violations.\n"
+        "- Critical: >10 failed logins (brute force), successful breaches, or critical asset compromise.\n"
+        "Examples:\n"
+        "Event: 150 failed SSH logins from external IP\n"
+        "Output: {\"recommendation\": \"Block source IP immediately\", \"severity\": \"Critical\"}\n"
+        "Event: Successful VPN login with MFA\n"
+        "Output: {\"recommendation\": \"None\", \"severity\": \"Info\"}\n"
+        f"Event: {event_str}\n"
+        "Output: "
+    )
     
     req_body = {
         "model": "llama3.2:3b",
         "prompt": prompt,
+        "format": "json",
         "stream": False
     }
     try:
