@@ -111,9 +111,16 @@ func (e *Engine) correlate(ctx context.Context, event models.OCSFFinding) {
 
 	corrKey := target
 	ctxData, exists := e.correlations[corrKey]
+	
+	// Temporal Correlation: 5-minute window
+	if exists && time.Since(ctxData.CreatedAt) > 5*time.Minute {
+		// Window expired, force a new chain
+		exists = false
+	}
+
 	if !exists {
 		ctxData = &CorrelationContext{
-			ID:        "CORR-" + target,
+			ID:        "CORR-" + target + "-" + uuid.New().String()[:8],
 			Target:    target,
 			CreatedAt: time.Now(),
 		}
@@ -123,26 +130,32 @@ func (e *Engine) correlate(ctx context.Context, event models.OCSFFinding) {
 	ctxData.Events = append(ctxData.Events, event)
 	event.CorrelationID = ctxData.ID
 	e.store.SaveTelemetry(event)
-	e.store.SaveCorrelation(ctxData.ID, ctxData.Target, len(ctxData.Events), event.Severity, "ACTIVE")
+	
+	// Severity aggregation: escalate if any event in chain is higher severity
+	// Simple mapping: Info<Low<Medium<High<Critical
+	chainSeverity := "Info"
+	scoreMap := map[string]int{"Info":0, "Low":1, "Medium":2, "High":3, "Critical":4}
+	currentHighest := 0
+	for _, ev := range ctxData.Events {
+		if scoreMap[ev.Severity] > currentHighest {
+			currentHighest = scoreMap[ev.Severity]
+			chainSeverity = ev.Severity
+		}
+	}
 
-	if event.Severity == "Critical" || event.Severity == "High" {
-		e.triggerAI(ctxData)
-	} else if len(ctxData.Events) >= 3 {
+	e.store.SaveCorrelation(ctxData.ID, ctxData.Target, len(ctxData.Events), chainSeverity, "ACTIVE")
+
+	// Trigger criteria: High/Critical severity OR >= 3 correlated events
+	if currentHighest >= 3 || len(ctxData.Events) >= 3 {
 		e.triggerAI(ctxData)
 		delete(e.correlations, corrKey)
 	}
 }
 
 func (e *Engine) triggerAI(corr *CorrelationContext) {
-	summary := fmt.Sprintf("Correlation %s targeting %s with %d events. Latest: %s", corr.ID, corr.Target, len(corr.Events), corr.Events[len(corr.Events)-1].Message)
-
-	eventData, _ := json.Marshal(map[string]string{
-		"event_source": "Wazuh",
-		"event_type":   "Authentication Bypass",
-		"description":  summary,
-		"severity":     "High",
-		"source_ip":    corr.Target,
-	})
+	// AI Evidence Boundary: Send the REAL correlated events
+	// Instead of hardcoded Wazuh strings, we pass the actual OCSF array
+	eventData, _ := json.Marshal(corr.Events)
 
 	result, err := langgraph.ExecuteReasoningGraph(eventData, "E:\\New folder\\SAE_Tools\\SAE\\backend\\internal\\langgraph")
 	if err != nil {
@@ -152,19 +165,31 @@ func (e *Engine) triggerAI(corr *CorrelationContext) {
 
 	// Save initial Decision to Postgres as REQUESTED
 	e.store.SaveDecision(corr.ID, result.RiskScore, result.Validation, result.Decision)
-	e.store.SaveCorrelation(corr.ID, corr.Target, len(corr.Events), "High", "RESOLVED")
+	// Calculate chain severity for resolution record
+	chainSeverity := "Info"
+	scoreMap := map[string]int{"Info":0, "Low":1, "Medium":2, "High":3, "Critical":4}
+	currentHighest := 0
+	for _, ev := range corr.Events {
+		if scoreMap[ev.Severity] > currentHighest {
+			currentHighest = scoreMap[ev.Severity]
+			chainSeverity = ev.Severity
+		}
+	}
+
+	// Update correlation to RESOLVED
+	e.store.SaveCorrelation(corr.ID, corr.Target, len(corr.Events), chainSeverity, "RESOLVED")
 	e.store.SaveResponseState(corr.ID, "REQUESTED")
 
 	// Policy Engine bounds checking
-	if result.Decision == "block_ip" || result.Decision == "isolate_host" {
-		log.Printf("[POLICY ENGINE] DANGER: LLM recommended highly privileged action: %s. Action blocked.", result.Decision)
+	if result.Decision == "ESCALATE_TO_HUMAN" {
+		log.Printf("[POLICY ENGINE] DANGER: LLM recommended highly privileged action: %s. Action blocked for manual authorization.", result.Decision)
 		e.store.SaveResponseState(corr.ID, "REJECTED")
 		return
 	}
 	
 	e.store.SaveResponseState(corr.ID, "AUTHORIZED")
 	
-	if result.Decision == "monitor" || result.Decision == "none" {
+	if result.Decision == "LOG_AND_MONITOR" || result.Decision == "none" {
 		e.store.SaveResponseState(corr.ID, "COMPLETED_NO_ACTION")
 		return
 	}
