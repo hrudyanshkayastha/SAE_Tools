@@ -1,32 +1,32 @@
-# SAE Case Management Report (Phase 3)
+# SAE Case Management Runtime Report
 
-## 1. Architecture
-The SAE Phase 3 architecture connects the AI Correlation Engine directly into Case Management (TheHive) and Threat Intelligence (Cortex) execution paths.
+## Component 1: TheHive (SAE Case Management)
+1. **Upstream Identity**: TheHive Project
+2. **Integrated Commit**: d390a0316ccd7780df6a49eccc773e5c28b43cc2
+3. **Integrated Version**: 4.1.24-1
+4. **License**: AGPL-3.0 (Archived OSS release)
+5. **Runtime Dependencies**: Java 8, Elasticsearch 7.x, Cassandra 3.x (or compatible), minimum 4-6GB RAM total.
+6. **Execution Goal**: Spin up TheHive alongside Cortex, receive SAE incident, generate Case, trigger analyzer.
+7. **Runtime Constraints**: 
+   - Public distributions of TheHive 3 and 4 have ended and Docker images for OSS branch are largely unmaintained.
+   - The local environment is currently missing a running Docker Desktop Linux engine (
+pipe:////./pipe/dockerDesktopLinuxEngine unavailable in the WSL host layer), making it physically impossible to provision the database (Cassandra) and search (Elasticsearch) dependencies required to run the Java applications.
+8. **Final Status**: **BLOCKED** (Runtime Environment Limitation)
 
-- **Trigger:** When LangGraph confirms a high-risk escalation, the engine intercepts the execution path prior to Shuffle Response execution.
-- **TheHive Flow:** Dispatches a structured HTTP POST to TheHive's `/api/case` endpoint containing the Target, AI Score, and AI Recommendation.
-- **Cortex Flow:** If case generation is successful, SAE automatically triggers a Cortex Analyzer (e.g., `VirusTotal_GetReport_3_0`) targeting the offending entity to collect Threat Intel for the newly minted case.
-- **Client Integration:** Implemented strictly in `backend/internal/thehive/client.go` and `backend/internal/cortex/client.go`. 
+---
 
-## 2. Runtime Environment & Blocker
-During validation, we attempted to spawn the official Cortex deployment stack (`docker.io/thehiveproject/cortex:3.1.0-0.3RC1`) alongside Elasticsearch and TheHive on the local sandbox engine. 
+## Component 2: Cortex (SAE Threat Analysis)
+1. **Upstream Identity**: TheHive Project
+2. **Integrated Commit**: 9f1bc90ae92d4ba5e843439389f234e25489db1e
+3. **Integrated Version**: 4.1.0-1
+4. **License**: AGPL-3.0 (Archived OSS release)
+5. **Runtime Dependencies**: Java 8, Elasticsearch 7.8.1 (as per docker/cortex/docker-compose.yml), Docker socket access (/var/run/docker.sock) for executing analyzer images.
+6. **Execution Goal**: Process an observable pushed from a TheHive Case via SAE, return analysis taxonomy.
+7. **Runtime Constraints**: 
+   - Same as TheHive. The local environment's lack of Docker Engine access prevents spinning up Elasticsearch and the Cortex daemon. Furthermore, Cortex relies heavily on spawning transient Docker containers for its internal analyzers, which is fundamentally blocked without a healthy Docker socket.
+8. **Final Status**: **BLOCKED** (Runtime Environment Limitation)
 
-**Infrastructure Blocker:** The upstream Docker Hub images for Cortex (version 3.1.x) have been deprecated/removed, returning standard Docker registry resolution failures. Furthermore, attempting to compile TheHive 5 natively from Scala/SBT requires a heavy standalone Cassandra 4.x cluster and Elasticsearch deployment which exceeds the orchestration footprint of this local sandbox environment.
+---
 
-## 3. Exact Execution Evidence
-SAE explicitly handles this infrastructure failure via its client timeout architectures without crashing.
-```log
-[CASE MANAGEMENT] Opening Incident in TheHive for CORR-192.168.1.10...
-[CASE MANAGEMENT] [BLOCKED] TheHive execution failed: TheHive API failed: dial tcp [::1]:9000: connectex: No connection could be made because the target machine actively refused it.
-```
-
-## 4. Test Results
-- **Suite Health:** 191/191 backend tests PASS.
-- **Resilience:** The failure of TheHive/Cortex APIs does *not* break the pipeline. The `engine.go` correctly traps the timeout/refusal and continues processing the execution payload towards Shuffle.
-
-## 5. Security/Policy Boundaries
-- Preserved existing strict human-authorization bounds. Case escalation triggers asynchronously and does not pause/override strict `block_ip` or `isolate_host` security traps.
-
-## 6. Capability Status
-- **TheHive:** BLOCKED (Infrastructure orchestration constraints).
-- **Cortex:** BLOCKED (Upstream Docker registry deprecation/Sandbox cluster limits).
+## Conclusion
+The integrations for TheHive and Cortex are correctly implemented in the sae-core/internal/thehive and sae-core/internal/cortex packages. The code builds correctly and all associated unit tests pass. However, true end-to-end physical runtime verification cannot proceed until a minimum reproducible stack (Cassandra + Elasticsearch + TheHive + Cortex) can be provisioned. We are keeping the status **BLOCKED** and will not fabricate case creation or analyzer results.
