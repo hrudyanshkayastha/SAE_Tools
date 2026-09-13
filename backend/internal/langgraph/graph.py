@@ -6,7 +6,7 @@ from langgraph.graph import StateGraph, END
 
 # Define the state graph
 class GraphState(TypedDict):
-    event: dict
+    event: list | dict
     llm_recommendation: dict
     validation_status: str
     risk_score: int
@@ -20,7 +20,7 @@ def node_investigate(state: GraphState):
     # Call the local Ollama LLM API directly (SAE Local AI Runtime)
     event_str = json.dumps(state["event"])
     prompt = (
-        "Analyze this security event and output ONLY a JSON object. "
+        "Analyze this security event sequence and output ONLY a JSON object. "
         "The JSON object MUST contain exactly two keys: 'recommendation' (string explaining what to do) and 'severity' (string exactly one of: Info, Low, Medium, High, Critical). "
         "Severity Rubric:\n"
         "- Info: Benign, administrative tasks, or nonsense/test logs.\n"
@@ -33,7 +33,7 @@ def node_investigate(state: GraphState):
         "Output: {\"recommendation\": \"Block source IP immediately\", \"severity\": \"Critical\"}\n"
         "Event: Successful VPN login with MFA\n"
         "Output: {\"recommendation\": \"None\", \"severity\": \"Info\"}\n"
-        f"Event: {event_str}\n"
+        f"Event Sequence: {event_str}\n"
         "Output: "
     )
     
@@ -105,8 +105,8 @@ if __name__ == "__main__":
             
         event = json.loads(input_data)
         
-        # Missing required fields
-        if not isinstance(event, dict):
+        # Allow dict (single event) or list (correlation chain)
+        if not isinstance(event, (dict, list)):
             print(json.dumps({"error": "malformed input"}))
             sys.exit(1)
             

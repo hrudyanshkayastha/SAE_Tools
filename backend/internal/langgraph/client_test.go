@@ -96,3 +96,16 @@ func TestParseGraphResult_NilInput(t *testing.T) {
 	_, err := ParseGraphResultToOCSF(nil)
 	if err == nil { t.Errorf("expected error on nil") }
 }
+
+func TestExecuteReasoningGraph_CorrelationArray(t *testing.T) {
+	// Represents the exact shape sent by the Correlation Engine
+	// e.g. eventData, _ := json.Marshal(corr.Events)
+	event := []byte(`[{"event_id": "1", "severity": "Low"}, {"event_id": "2", "severity": "High"}]`)
+	res, err := ExecuteReasoningGraph(event, getScriptDir())
+	if err != nil {
+		t.Fatalf("Regression found: array input failed with: %v", err)
+	}
+	if res.Decision == "" {
+		t.Errorf("missing decision for array input")
+	}
+}
