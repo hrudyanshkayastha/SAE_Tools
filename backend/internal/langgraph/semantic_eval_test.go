@@ -1,4 +1,4 @@
-
+﻿
 package langgraph
 
 import (
@@ -41,7 +41,7 @@ func TestSemanticEvaluation(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
-			result, err := ExecuteReasoningGraph([]byte(tc.InputEvent), getScriptDir())
+			result, err := ExecuteReasoningGraph([]byte(tc.InputEvent))
 			if err != nil {
 				t.Fatalf("Failed to execute reasoning graph: %v", err)
 			}

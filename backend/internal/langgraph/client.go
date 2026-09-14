@@ -1,4 +1,4 @@
-package langgraph
+﻿package langgraph
 
 import (
 	"bytes"
@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
-	"path/filepath"
 )
 
 type GraphOutput struct {
@@ -18,14 +17,14 @@ type GraphOutput struct {
 	Decision         string                 `json:"decision,omitempty"`
 }
 
-func ExecuteReasoningGraph(eventData []byte, scriptDir string) (*GraphOutput, error) {
+func ExecuteReasoningGraph(eventData []byte) (*GraphOutput, error) {
 	if len(eventData) == 0 {
 		return nil, fmt.Errorf("empty event")
 	}
 
 	log.Printf("[AI INPUT PAYLOAD CAPTURE] --> %s", string(eventData))
 
-	scriptPath := filepath.Join(scriptDir, "graph.py")
+	scriptPath := GetGraphScriptPath()
 	
 	cmd := exec.Command("python", scriptPath)
 	cmd.Stdin = bytes.NewReader(eventData)

@@ -1,4 +1,4 @@
-package langgraph
+﻿package langgraph
 
 import (
 	"encoding/json"
@@ -14,12 +14,12 @@ func BenchmarkLangGraph_Inference(b *testing.B) {
 		"severity":     "Medium",
 		"source_ip":    "10.0.0.5",
 	})
-	
-	// Benchmark is very slow for LLMs, so we limit b.N to just what go test decides, 
+
+	// Benchmark is very slow for LLMs, so we limit b.N to just what go test decides,
 	// typically we just want the time/op.
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := ExecuteReasoningGraph(eventData, "E:\\New folder\\SAE_Tools\\SAE\\backend\\internal\\langgraph")
+		_, err := ExecuteReasoningGraph(eventData)
 		if err != nil {
 			b.Fatalf("LangGraph execution failed: %v", err)
 		}

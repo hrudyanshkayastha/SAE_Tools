@@ -1,15 +1,15 @@
-package engine
+﻿package engine
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"sae-core/internal/cortex"
 	"sae-core/internal/langgraph"
 	"sae-core/internal/shuffle"
 	"sae-core/internal/storage"
 	"sae-core/internal/thehive"
-	"sae-core/internal/cortex"
 	"sae-core/models"
 	"sync"
 	"time"
@@ -111,7 +111,7 @@ func (e *Engine) correlate(ctx context.Context, event models.OCSFFinding) *langg
 
 	corrKey := target
 	ctxData, exists := e.correlations[corrKey]
-	
+
 	// Temporal Correlation: 5-minute window
 	if exists && time.Since(ctxData.CreatedAt) > 5*time.Minute {
 		// Window expired, force a new chain
@@ -130,11 +130,11 @@ func (e *Engine) correlate(ctx context.Context, event models.OCSFFinding) *langg
 	ctxData.Events = append(ctxData.Events, event)
 	event.CorrelationID = ctxData.ID
 	e.store.SaveTelemetry(event)
-	
+
 	// Severity aggregation: escalate if any event in chain is higher severity
 	// Simple mapping: Info<Low<Medium<High<Critical
 	chainSeverity := "Info"
-	scoreMap := map[string]int{"Info":0, "Low":1, "Medium":2, "High":3, "Critical":4}
+	scoreMap := map[string]int{"Info": 0, "Low": 1, "Medium": 2, "High": 3, "Critical": 4}
 	currentHighest := 0
 	for _, ev := range ctxData.Events {
 		if scoreMap[ev.Severity] > currentHighest {
@@ -159,7 +159,7 @@ func (e *Engine) triggerAI(corr *CorrelationContext) (*langgraph.GraphOutput, er
 	// Instead of hardcoded Wazuh strings, we pass the actual OCSF array
 	eventData, _ := json.Marshal(corr.Events)
 
-	result, err := langgraph.ExecuteReasoningGraph(eventData, "E:\\New folder\\SAE_Tools\\SAE\\backend\\internal\\langgraph")
+	result, err := langgraph.ExecuteReasoningGraph(eventData)
 	if err != nil {
 		log.Printf("[AI REASONING] LangGraph execution failed: %v", err)
 		return nil, err
@@ -169,7 +169,7 @@ func (e *Engine) triggerAI(corr *CorrelationContext) (*langgraph.GraphOutput, er
 	e.store.SaveDecision(corr.ID, result.RiskScore, result.Validation, result.Decision)
 	// Calculate chain severity for resolution record
 	chainSeverity := "Info"
-	scoreMap := map[string]int{"Info":0, "Low":1, "Medium":2, "High":3, "Critical":4}
+	scoreMap := map[string]int{"Info": 0, "Low": 1, "Medium": 2, "High": 3, "Critical": 4}
 	currentHighest := 0
 	for _, ev := range corr.Events {
 		if scoreMap[ev.Severity] > currentHighest {
@@ -188,9 +188,9 @@ func (e *Engine) triggerAI(corr *CorrelationContext) (*langgraph.GraphOutput, er
 		e.store.SaveResponseState(corr.ID, "REJECTED")
 		return result, nil
 	}
-	
+
 	e.store.SaveResponseState(corr.ID, "AUTHORIZED")
-	
+
 	if result.Decision == "LOG_AND_MONITOR" || result.Decision == "none" {
 		e.store.SaveResponseState(corr.ID, "COMPLETED_NO_ACTION")
 		return result, nil
@@ -210,13 +210,13 @@ func (e *Engine) triggerAI(corr *CorrelationContext) (*langgraph.GraphOutput, er
 	if err != nil {
 		log.Printf("[RESPONSE] Shuffle execution failed: %v", err)
 		e.store.SaveResponseState(corr.ID, "FAILED")
-		
+
 		failEvent := models.OCSFFinding{
-			EventID:      uuid.New().String(),
+			EventID:       uuid.New().String(),
 			CorrelationID: corr.ID,
-			ActivityName: "Response Execution Failed",
-			Severity:     "High",
-			Message:      fmt.Sprintf("Shuffle execution failed for action %s: %v", result.Decision, err),
+			ActivityName:  "Response Execution Failed",
+			Severity:      "High",
+			Message:       fmt.Sprintf("Shuffle execution failed for action %s: %v", result.Decision, err),
 		}
 		e.store.PublishEvent(context.Background(), failEvent)
 		return result, err
@@ -224,14 +224,14 @@ func (e *Engine) triggerAI(corr *CorrelationContext) (*langgraph.GraphOutput, er
 
 	// Now independently verify the execution (Closed Loop)
 	log.Printf("[RESPONSE] Polling for action %s verification (ExecID: %s)...", result.Decision, execID)
-	
+
 	verifyCtx, vCancel := context.WithTimeout(context.Background(), 10*time.Second) // 10 second bounded polling window
 	defer vCancel()
-	
+
 	verifyResult, vErr := e.shuffleClient.PollExecutionStatus(verifyCtx, execID, 2*time.Second) // Poll every 2 seconds
 	var finalState string
 	var verifMsg string
-	
+
 	if vErr != nil && verifyResult.Status == "TIMEOUT" {
 		finalState = "TIMEOUT"
 		verifMsg = "Execution timed out during verification"
@@ -247,16 +247,16 @@ func (e *Engine) triggerAI(corr *CorrelationContext) (*langgraph.GraphOutput, er
 	}
 
 	e.store.SaveResponseState(corr.ID, finalState)
-	
+
 	// Generate Verification OCSF Event
 	verifEvent := models.OCSFFinding{
-		EventID:      uuid.New().String(),
+		EventID:       uuid.New().String(),
 		CorrelationID: corr.ID,
-		ActivityName: "Response Verification",
-		Severity:     "Info",
-		Status:       finalState,
-		Message:      verifMsg,
-		Time:         time.Now(),
+		ActivityName:  "Response Verification",
+		Severity:      "Info",
+		Status:        finalState,
+		Message:       verifMsg,
+		Time:          time.Now(),
 	}
 	verifEvent.Observables = append(verifEvent.Observables, models.Observable{Type: "ExecutionID", Value: execID})
 	e.store.PublishEvent(context.Background(), verifEvent)

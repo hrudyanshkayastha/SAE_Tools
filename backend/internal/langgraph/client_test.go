@@ -1,4 +1,4 @@
-package langgraph
+﻿package langgraph
 
 import (
 	"os"
@@ -13,7 +13,7 @@ func getScriptDir() string {
 
 func TestExecuteReasoningGraph_ValidEvent(t *testing.T) {
 	event := []byte(`{"event_type": "login_failure", "src_ip": "10.0.0.1"}`)
-	res, err := ExecuteReasoningGraph(event, getScriptDir())
+	res, err := ExecuteReasoningGraph(event)
 	if err != nil { t.Fatalf("execution failed: %v", err) }
 	
 	if res.Decision == "" { t.Errorf("missing decision") }
@@ -22,19 +22,19 @@ func TestExecuteReasoningGraph_ValidEvent(t *testing.T) {
 
 func TestExecuteReasoningGraph_MalformedInput(t *testing.T) {
 	event := []byte(`{"event_type": `) // malformed json
-	_, err := ExecuteReasoningGraph(event, getScriptDir())
+	_, err := ExecuteReasoningGraph(event)
 	if err == nil || !strings.Contains(err.Error(), "malformed input") {
 		t.Errorf("expected malformed input error, got: %v", err)
 	}
 }
 
 func TestExecuteReasoningGraph_EmptyEvent(t *testing.T) {
-	_, err := ExecuteReasoningGraph([]byte(""), getScriptDir())
+	_, err := ExecuteReasoningGraph([]byte(""))
 	if err == nil { t.Errorf("expected empty event error") }
 }
 
 func TestExecuteReasoningGraph_WhitespaceOnly(t *testing.T) {
-	_, err := ExecuteReasoningGraph([]byte("   \n"), getScriptDir())
+	_, err := ExecuteReasoningGraph([]byte("   \n"))
 	if err == nil || !strings.Contains(err.Error(), "empty event") {
 		t.Errorf("expected empty event error from graph.py")
 	}
@@ -43,7 +43,7 @@ func TestExecuteReasoningGraph_WhitespaceOnly(t *testing.T) {
 func TestExecuteReasoningGraph_StatePropagation(t *testing.T) {
 	// The state propagation is proven by the graph successfully returning the final risk score based on the mocked or live LLM step.
 	event := []byte(`{"event_type": "test_propagation"}`)
-	res, err := ExecuteReasoningGraph(event, getScriptDir())
+	res, err := ExecuteReasoningGraph(event)
 	if err != nil { t.Fatalf("failed: %v", err) }
 	
 	// Ensure that LLMRecommendation propagated to Validation and RiskScore
@@ -53,14 +53,14 @@ func TestExecuteReasoningGraph_StatePropagation(t *testing.T) {
 func TestExecuteReasoningGraph_DeterministicTermination(t *testing.T) {
 	// Tests that the graph does not loop infinitely. If it reaches here, it terminated deterministically.
 	event := []byte(`{"type": "terminate_test"}`)
-	_, err := ExecuteReasoningGraph(event, getScriptDir())
+	_, err := ExecuteReasoningGraph(event)
 	if err != nil { t.Fatalf("should terminate cleanly") }
 }
 
 func TestExecuteReasoningGraph_SecurityBoundary(t *testing.T) {
 	// Test that LLM output recommending a privileged action is blocked at the validation boundary
 	event := []byte(`{"type": "synthetic_high_severity"}`)
-	res, err := ExecuteReasoningGraph(event, getScriptDir())
+	res, err := ExecuteReasoningGraph(event)
 	if err != nil { t.Fatalf("failed: %v", err) }
 	
 	// We expect the graph to NOT execute privileged actions. 
@@ -101,7 +101,7 @@ func TestExecuteReasoningGraph_CorrelationArray(t *testing.T) {
 	// Represents the exact shape sent by the Correlation Engine
 	// e.g. eventData, _ := json.Marshal(corr.Events)
 	event := []byte(`[{"event_id": "1", "severity": "Low"}, {"event_id": "2", "severity": "High"}]`)
-	res, err := ExecuteReasoningGraph(event, getScriptDir())
+	res, err := ExecuteReasoningGraph(event)
 	if err != nil {
 		t.Fatalf("Regression found: array input failed with: %v", err)
 	}
