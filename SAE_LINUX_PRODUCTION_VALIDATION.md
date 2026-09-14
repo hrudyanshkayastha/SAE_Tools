@@ -1,7 +1,7 @@
 ﻿# SAE LINUX PRODUCTION VALIDATION
 
 ## OVERALL VERDICT: BLOCKED (ENVIRONMENT LAYER)
-SAE cannot yet be certified as "PRODUCTION-READY FOR CONTROLLED DEPLOYMENT" in this specific workspace because the underlying Windows-to-WSL2 Hyper-V network drops persistent TCP connections to Redis and PostgreSQL. 
+SAE cannot yet be certified as "SAE core intelligence pipeline is validated for controlled deployment; infrastructure-dependent production validation remains outstanding." in this specific workspace because the underlying Windows-to-WSL2 Hyper-V network drops persistent TCP connections to Redis and PostgreSQL. 
 
 While the Go daemon successfully initialized the database schemas and processed initial Trivy events through Redis, sustained polling and ingestion were terminated by the host environment (connectex: No connection could be made because the target machine actively refused it). 
 
