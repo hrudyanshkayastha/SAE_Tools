@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os/exec"
 	"path/filepath"
 )
@@ -21,6 +22,8 @@ func ExecuteReasoningGraph(eventData []byte, scriptDir string) (*GraphOutput, er
 	if len(eventData) == 0 {
 		return nil, fmt.Errorf("empty event")
 	}
+
+	log.Printf("[AI INPUT PAYLOAD CAPTURE] --> %s", string(eventData))
 
 	scriptPath := filepath.Join(scriptDir, "graph.py")
 	
