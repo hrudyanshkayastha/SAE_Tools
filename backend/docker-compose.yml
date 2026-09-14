@@ -27,3 +27,10 @@ services:
       CLICKHOUSE_PASSWORD: 
       CLICKHOUSE_DB: sae_telemetry
     restart: always
+  shuffle-backend:
+    image: frikky/shuffle-backend:latest
+    ports:
+      - "5001:5001"
+    environment:
+      - SHUFFLE_APP_PORT=5001
+      - DATA_DIR=/shuffle-data
