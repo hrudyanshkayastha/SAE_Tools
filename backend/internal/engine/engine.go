@@ -93,7 +93,7 @@ func (e *Engine) processMessage(ctx context.Context, msg redis.XMessage) {
 	e.correlate(ctx, event)
 }
 
-func (e *Engine) correlate(ctx context.Context, event models.OCSFFinding) {
+func (e *Engine) correlate(ctx context.Context, event models.OCSFFinding) *langgraph.GraphOutput {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -147,12 +147,14 @@ func (e *Engine) correlate(ctx context.Context, event models.OCSFFinding) {
 
 	// Trigger criteria: High/Critical severity OR >= 3 correlated events
 	if currentHighest >= 3 || len(ctxData.Events) >= 3 {
-		e.triggerAI(ctxData)
+		res, _ := e.triggerAI(ctxData)
 		delete(e.correlations, corrKey)
+		return res
 	}
+	return nil
 }
 
-func (e *Engine) triggerAI(corr *CorrelationContext) {
+func (e *Engine) triggerAI(corr *CorrelationContext) (*langgraph.GraphOutput, error) {
 	// AI Evidence Boundary: Send the REAL correlated events
 	// Instead of hardcoded Wazuh strings, we pass the actual OCSF array
 	eventData, _ := json.Marshal(corr.Events)
@@ -160,7 +162,7 @@ func (e *Engine) triggerAI(corr *CorrelationContext) {
 	result, err := langgraph.ExecuteReasoningGraph(eventData, "E:\\New folder\\SAE_Tools\\SAE\\backend\\internal\\langgraph")
 	if err != nil {
 		log.Printf("[AI REASONING] LangGraph execution failed: %v", err)
-		return
+		return nil, err
 	}
 
 	// Save initial Decision to Postgres as REQUESTED
@@ -184,14 +186,14 @@ func (e *Engine) triggerAI(corr *CorrelationContext) {
 	if result.Decision == "ESCALATE_TO_HUMAN" {
 		log.Printf("[POLICY ENGINE] DANGER: LLM recommended highly privileged action: %s. Action blocked for manual authorization.", result.Decision)
 		e.store.SaveResponseState(corr.ID, "REJECTED")
-		return
+		return result, nil
 	}
 	
 	e.store.SaveResponseState(corr.ID, "AUTHORIZED")
 	
 	if result.Decision == "LOG_AND_MONITOR" || result.Decision == "none" {
 		e.store.SaveResponseState(corr.ID, "COMPLETED_NO_ACTION")
-		return
+		return result, nil
 	}
 
 	payload := shuffle.ActionPayload{
@@ -217,7 +219,7 @@ func (e *Engine) triggerAI(corr *CorrelationContext) {
 			Message:      fmt.Sprintf("Shuffle execution failed for action %s: %v", result.Decision, err),
 		}
 		e.store.PublishEvent(context.Background(), failEvent)
-		return
+		return result, err
 	}
 
 	// Now independently verify the execution (Closed Loop)
@@ -258,4 +260,5 @@ func (e *Engine) triggerAI(corr *CorrelationContext) {
 	}
 	verifEvent.Observables = append(verifEvent.Observables, models.Observable{Type: "ExecutionID", Value: execID})
 	e.store.PublishEvent(context.Background(), verifEvent)
+	return result, nil
 }

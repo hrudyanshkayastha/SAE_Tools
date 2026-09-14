@@ -21,7 +21,7 @@ type Storage struct {
 func InitStorage() (*Storage, error) {
 	pgDSN := os.Getenv("SAE_PG_DSN")
 	if pgDSN == "" {
-		pgDSN = "postgres://sae:sae_password@localhost:5432/sae_db?sslmode=disable"
+		pgDSN = "postgres://sae:changeme_dev_only@localhost:5432/sae_db?sslmode=disable"
 	}
 	pgDB, err := sql.Open("postgres", pgDSN)
 	if err != nil {
@@ -91,6 +91,9 @@ func InitStorage() (*Storage, error) {
 }
 
 func (s *Storage) PublishEvent(ctx context.Context, event models.OCSFFinding) error {
+	if s == nil || s.Redis == nil {
+		return nil
+	}
 	data, _ := json.Marshal(event)
 	return s.Redis.XAdd(ctx, &redis.XAddArgs{
 		Stream: "sae_events",
@@ -99,6 +102,9 @@ func (s *Storage) PublishEvent(ctx context.Context, event models.OCSFFinding) er
 }
 
 func (s *Storage) SaveTelemetry(event models.OCSFFinding) error {
+	if s == nil || s.PG == nil {
+		return nil
+	}
 	data, _ := json.Marshal(event)
 	_, err := s.PG.Exec("INSERT INTO sae_telemetry (event_id, correlation_id, activity_name, severity, message, raw, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (event_id) DO NOTHING",
 		event.EventID, event.CorrelationID, event.ActivityName, event.Severity, event.Message, string(data), time.Now())
@@ -106,18 +112,27 @@ func (s *Storage) SaveTelemetry(event models.OCSFFinding) error {
 }
 
 func (s *Storage) SaveCorrelation(corrID string, target string, count int, severity string, status string) error {
+	if s == nil || s.PG == nil {
+		return nil
+	}
 	_, err := s.PG.Exec("INSERT INTO correlations (correlation_id, target, events_count, severity, status, created_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (correlation_id) DO UPDATE SET events_count = EXCLUDED.events_count, status = EXCLUDED.status",
 		corrID, target, count, severity, status, time.Now())
 	return err
 }
 
 func (s *Storage) SaveDecision(corrID string, riskScore int, validation string, action string) error {
+	if s == nil || s.PG == nil {
+		return nil
+	}
 	_, err := s.PG.Exec("INSERT INTO decisions (correlation_id, risk_score, validation, action, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (correlation_id) DO UPDATE SET risk_score = EXCLUDED.risk_score, validation = EXCLUDED.validation, action = EXCLUDED.action",
 		corrID, riskScore, validation, action, time.Now())
 	return err
 }
 
 func (s *Storage) SaveResponseState(corrID string, state string) error {
+	if s == nil || s.PG == nil {
+		return nil
+	}
 	_, err := s.PG.Exec("UPDATE decisions SET state = $1 WHERE correlation_id = $2", state, corrID)
 	return err
 }
