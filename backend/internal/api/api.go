@@ -172,7 +172,7 @@ func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
-	rows, err := s.store.PG.Query("SELECT json_build_object('correlation_id', correlation_id, 'risk_score', risk_score, 'validation', validation, 'action', action) FROM decisions")
+	rows, err := s.store.PG.Query("SELECT json_build_object('correlation_id', correlation_id, 'risk_score', risk_score, 'validation', validation, 'action', action, 'state', state) FROM decisions")
 	if err != nil {
 		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
 		return

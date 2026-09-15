@@ -1,0 +1,1 @@
+{"event_id":"mfa-benign-1","activity_name":"VPN Login Success","severity":"Info","message":"Successful VPN login with MFA","observables":[{"type":"User","value":"admin_bob"}]}

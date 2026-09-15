@@ -16,13 +16,13 @@
 
 ### VERIFIED
 - **UEBA v2 (Chunk E):** Standard deviation Risk Scoring calculated natively. Evidence: `[UEBA v2] ANOMALY DETECTED for User admin... Risk Score: 20`.
-- **SOC Dashboard (Chunk J):** HTML endpoint (`/dashboard`) rendered securely via the `api.go` multiplexer.
-- **AI Evaluation (Chunk G):** LangGraph execution natively trapped by strong typing.
-- **Response Verification (Chunk H):** Async Shuffle execution failures trapped and natively routed into Postgres OCSF logs.
-- **Performance (Chunk I):** Benchmark boundaries established locally.
 
 ### PARTIAL
-- **Correlation (Chunk F):** Grouping by entity remains robust, but MITRE ATT&CK chain visualization is deferred pending the data migration to ClickHouse.
+- **Correlation (Chunk F):** Grouping by entity remains robust, but MITRE ATT&CK chain visualization is deferred.
+- **AI Evaluation (Chunk G):** LLM quality validation is incomplete; currently relies only on JSON schemas.
+- **Response Verification (Chunk H):** Failed handling works, but full closed-loop verification is pending.
+- **Performance (Chunk I):** Local microbenchmarks established, but enterprise distributed scalability is unverified.
+- **SOC Dashboard (Chunk J):** A single HTML endpoint does not constitute a full SOC dashboard.
 
 ### BLOCKED (Infrastructure Constraints)
 In strict adherence to the mandate prohibiting fabricated evidence:

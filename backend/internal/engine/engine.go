@@ -1,4 +1,4 @@
-﻿package engine
+package engine
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"sae-core/internal/shuffle"
 	"sae-core/internal/storage"
 	"sae-core/internal/thehive"
+	"sae-core/internal/verification"
 	"sae-core/models"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ type Engine struct {
 	shuffleClient *shuffle.Client
 	thehiveClient *thehive.Client
 	cortexClient  *cortex.Client
+	verifier      verification.TargetVerifier
 
 	// Correlation state (in-memory for simple deterministic correlation)
 	correlations map[string]*CorrelationContext
@@ -36,12 +38,13 @@ type CorrelationContext struct {
 	CreatedAt time.Time
 }
 
-func NewEngine(store *storage.Storage, shuffleWebhook, thehiveURL, cortexURL string) *Engine {
+func NewEngine(store *storage.Storage, shuffleWebhook, thehiveURL, cortexURL string, verifier verification.TargetVerifier) *Engine {
 	return &Engine{
 		store:         store,
 		shuffleClient: shuffle.NewClient(shuffleWebhook),
 		thehiveClient: thehive.NewClient(thehiveURL, "mock-api-key"),
 		cortexClient:  cortex.NewClient(cortexURL, "mock-api-key"),
+		verifier:      verifier,
 		correlations:  make(map[string]*CorrelationContext),
 	}
 }
@@ -183,18 +186,41 @@ func (e *Engine) triggerAI(corr *CorrelationContext) (*langgraph.GraphOutput, er
 	e.store.SaveResponseState(corr.ID, "REQUESTED")
 
 	// Policy Engine bounds checking
+	validActions := map[string]bool{
+		"LOG_AND_MONITOR":   true,
+		"ESCALATE_TO_HUMAN": true,
+		"BLOCK_IP":          true,
+		"ISOLATE_HOST":      true,
+		"KILL_PROCESS":      true,
+		"DISABLE_ACCOUNT":   true,
+	}
+
+	if !validActions[result.Decision] {
+		log.Printf("[POLICY ENGINE] DANGER: Unrecognized or malformed decision: %s. Failing closed.", result.Decision)
+		e.store.SaveResponseState(corr.ID, "REJECTED")
+		return result, nil
+	}
+
 	if result.Decision == "ESCALATE_TO_HUMAN" {
-		log.Printf("[POLICY ENGINE] DANGER: LLM recommended highly privileged action: %s. Action blocked for manual authorization.", result.Decision)
+		log.Printf("[POLICY ENGINE] AI requested manual investigation. Halting automated response.")
+		e.store.SaveResponseState(corr.ID, "REJECTED")
+		return result, nil
+	}
+
+	if result.Decision == "LOG_AND_MONITOR" {
+		e.store.SaveResponseState(corr.ID, "COMPLETED_NO_ACTION")
+		return result, nil
+	}
+
+	// For actionable decisions, check strict policy constraints
+	// Rule: Action is authorized ONLY if RiskScore >= 80 AND chainSeverity is High/Critical
+	if result.RiskScore < 80 || (chainSeverity != "High" && chainSeverity != "Critical") {
+		log.Printf("[POLICY ENGINE] DANGER: Unauthorized action %s recommended for low-confidence/low-severity evidence. Blocked.", result.Decision)
 		e.store.SaveResponseState(corr.ID, "REJECTED")
 		return result, nil
 	}
 
 	e.store.SaveResponseState(corr.ID, "AUTHORIZED")
-
-	if result.Decision == "LOG_AND_MONITOR" || result.Decision == "none" {
-		e.store.SaveResponseState(corr.ID, "COMPLETED_NO_ACTION")
-		return result, nil
-	}
 
 	payload := shuffle.ActionPayload{
 		CorrelationID: corr.ID,
@@ -229,26 +255,25 @@ func (e *Engine) triggerAI(corr *CorrelationContext) (*langgraph.GraphOutput, er
 	defer vCancel()
 
 	verifyResult, vErr := e.shuffleClient.PollExecutionStatus(verifyCtx, execID, 2*time.Second) // Poll every 2 seconds
-	var finalState string
+	var finalState string = "SUCCEEDED"
 	var verifMsg string
-
-	if vErr != nil && verifyResult.Status == "TIMEOUT" {
-		finalState = "TIMEOUT"
-		verifMsg = "Execution timed out during verification"
-	} else if vErr != nil {
-		finalState = "VERIFICATION_FAILED"
-		verifMsg = fmt.Sprintf("Failed to verify execution status: %v", vErr)
-	} else if verifyResult.Status == "SUCCEEDED" {
-		finalState = "SUCCEEDED"
-		verifMsg = fmt.Sprintf("Action %s verified successful via Shuffle API", result.Decision)
-	} else {
+	if vErr != nil {
+		verifMsg = fmt.Sprintf("Shuffle execution failed for action %s: %s", result.Decision, vErr.Error())
+		log.Printf("[RESPONSE] %s", verifMsg)
 		finalState = "FAILED"
-		verifMsg = fmt.Sprintf("Execution reported failure: %s", verifyResult.Message)
+	} else if verifyResult.Status == "SUCCEEDED" {
+		verifMsg = fmt.Sprintf("Shuffle successfully verified execution of %s (ExecID: %s)", result.Decision, verifyResult.ExecutionID)
+		log.Printf("[RESPONSE] %s", verifMsg)
+		finalState = "SUCCEEDED"
+	} else {
+		verifMsg = fmt.Sprintf("Shuffle verification failed/timed-out for %s (Status: %s, Message: %s)", result.Decision, verifyResult.Status, verifyResult.Message)
+		log.Printf("[RESPONSE] %s", verifMsg)
+		finalState = verifyResult.Status
 	}
 
 	e.store.SaveResponseState(corr.ID, finalState)
 
-	// Generate Verification OCSF Event
+	// Generate Base Verification OCSF Event
 	verifEvent := models.OCSFFinding{
 		EventID:       uuid.New().String(),
 		CorrelationID: corr.ID,
@@ -260,5 +285,42 @@ func (e *Engine) triggerAI(corr *CorrelationContext) (*langgraph.GraphOutput, er
 	}
 	verifEvent.Observables = append(verifEvent.Observables, models.Observable{Type: "ExecutionID", Value: execID})
 	e.store.PublishEvent(context.Background(), verifEvent)
+
+	// TARGET-STATE VERIFICATION
+	if finalState == "SUCCEEDED" && e.verifier != nil {
+		tsRes := e.verifier.Verify(context.Background(), result.Decision, corr.Target)
+
+		metadata := map[string]string{
+			"action_type":    result.Decision,
+			"expected_state": tsRes.Expected,
+			"observed_state": tsRes.Observed,
+			"evidence":       tsRes.Evidence,
+		}
+		rawBytes, _ := json.Marshal(metadata)
+
+		tsEvent := models.OCSFFinding{
+			EventID:       uuid.New().String(),
+			CorrelationID: corr.ID,
+			ActivityName:  "Target-State Verification",
+			Severity:      "Info",
+			Status:        tsRes.State,
+			Message:       fmt.Sprintf("Target-State Verification Result: %s. Expected: %s, Observed: %s.", tsRes.State, tsRes.Expected, tsRes.Observed),
+			Time:          tsRes.Timestamp,
+			RawEvent:      string(rawBytes),
+		}
+		tsEvent.Observables = append(tsEvent.Observables, models.Observable{Type: "Target", Value: tsRes.Target})
+		tsEvent.Observables = append(tsEvent.Observables, models.Observable{Type: "ActionID", Value: execID})
+		
+		e.store.PublishEvent(context.Background(), tsEvent)
+
+		// Set final correlation state based on the Target-State reality, not just Shuffle
+		e.store.SaveResponseState(corr.ID, tsRes.State)
+		if tsRes.State != verification.StateVerified {
+			log.Printf("[VERIFY] Target-state verification failed for %s on %s: %s", result.Decision, corr.Target, tsRes.Evidence)
+		} else {
+			log.Printf("[VERIFY] Target-state VERIFIED for %s on %s", result.Decision, corr.Target)
+		}
+	}
+
 	return result, nil
 }

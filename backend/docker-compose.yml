@@ -17,16 +17,6 @@ services:
       - "5432:5432"
     restart: always
 
-  clickhouse:
-    image: clickhouse/clickhouse-server:latest
-    ports:
-      - "8123:8123"
-      - "9000:9000"
-    environment:
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: 
-      CLICKHOUSE_DB: sae_telemetry
-    restart: always
   shuffle-backend:
     image: frikky/shuffle-backend:latest
     ports:
@@ -34,3 +24,48 @@ services:
     environment:
       - SHUFFLE_APP_PORT=5001
       - DATA_DIR=/shuffle-data
+      - SHUFFLE_OPENSEARCH_URL=https://shuffle-opensearch:9200
+      - SHUFFLE_OPENSEARCH_USERNAME=admin
+      - SHUFFLE_OPENSEARCH_PASSWORD=admin_password123!
+      - SHUFFLE_OPENSEARCH_APIKEY=
+      - SHUFFLE_OPENSEARCH_SKIPSSL_VERIFY=true
+      - SHUFFLE_SKIPSSL_VERIFY=true
+      - SHUFFLE_ENCRYPTION_MODIFIER=dummy
+    restart: unless-stopped
+
+  shuffle-opensearch:
+    image: opensearchproject/opensearch:2.11.1
+    hostname: shuffle-opensearch
+    container_name: shuffle-opensearch
+    environment:
+      - "OPENSEARCH_JAVA_OPTS=-Xms1024m -Xmx1024m"
+      - bootstrap.memory_lock=true
+      - DISABLE_PERFORMANCE_ANALYZER_AGENT_CLI=true
+      - cluster.initial_master_nodes=shuffle-opensearch
+      - cluster.routing.allocation.disk.threshold_enabled=false
+      - cluster.name=shuffle-cluster
+      - node.name=shuffle-opensearch
+      - node.store.allow_mmap=false
+      - discovery.seed_hosts=shuffle-opensearch
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=admin_password123!
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    restart: unless-stopped
+
+  shuffle-orborus:
+    image: frikky/shuffle-orborus:latest
+    container_name: shuffle-orborus
+    hostname: shuffle-orborus
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - SHUFFLE_APP_SDK_TIMEOUT=300
+      - ENVIRONMENT_NAME=Shuffle
+      - BASE_URL=http://shuffle-backend:5001
+      - DOCKER_API_VERSION=1.44
+    restart: unless-stopped

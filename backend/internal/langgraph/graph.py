@@ -21,18 +21,27 @@ def node_investigate(state: GraphState):
     event_str = json.dumps(state["event"])
     prompt = (
         "Analyze this security event sequence and output ONLY a JSON object. "
-        "The JSON object MUST contain exactly two keys: 'recommendation' (string explaining what to do) and 'severity' (string exactly one of: Info, Low, Medium, High, Critical). "
+        "The JSON object MUST contain exactly two keys: 'action' and 'severity'.\n"
+        "'action' MUST be exactly one of: LOG_AND_MONITOR, ESCALATE_TO_HUMAN, BLOCK_IP, ISOLATE_HOST, KILL_PROCESS, DISABLE_ACCOUNT.\n"
+        "'severity' MUST be exactly one of: Info, Low, Medium, High, Critical.\n\n"
         "Severity Rubric:\n"
         "- Info: Benign, administrative tasks, or nonsense/test logs.\n"
         "- Low: Routine authorized actions.\n"
         "- Medium: Suspicious unconfirmed activity.\n"
         "- High: Confirmed attacks or policy violations.\n"
-        "- Critical: >10 failed logins (brute force), successful breaches, or critical asset compromise.\n"
+        "- Critical: >10 failed logins (brute force), successful breaches, or critical asset compromise.\n\n"
+        "Action Rubric:\n"
+        "- LOG_AND_MONITOR: For Info or Low severity events.\n"
+        "- ESCALATE_TO_HUMAN: For Medium severity or complex ambiguous events requiring investigation.\n"
+        "- BLOCK_IP: For High/Critical external network attacks.\n"
+        "- ISOLATE_HOST: For High/Critical internal malware or endpoint compromise.\n"
+        "- KILL_PROCESS: For High/Critical malicious processes.\n"
+        "- DISABLE_ACCOUNT: For High/Critical compromised user credentials.\n\n"
         "Examples:\n"
         "Event: 150 failed SSH logins from external IP\n"
-        "Output: {\"recommendation\": \"Block source IP immediately\", \"severity\": \"Critical\"}\n"
+        "Output: {\"action\": \"BLOCK_IP\", \"severity\": \"Critical\"}\n"
         "Event: Successful VPN login with MFA\n"
-        "Output: {\"recommendation\": \"None\", \"severity\": \"Info\"}\n"
+        "Output: {\"action\": \"LOG_AND_MONITOR\", \"severity\": \"Info\"}\n"
         f"Event Sequence: {event_str}\n"
         "Output: "
     )
@@ -49,17 +58,19 @@ def node_investigate(state: GraphState):
             resp_data = json.loads(response.read().decode('utf-8'))
             llm_out = json.loads(resp_data.get("response", "{}"))
     except Exception as e:
-        llm_out = {"recommendation": f"LLM error: {str(e)}", "severity": "Info"}
+        llm_out = {"action": "ESCALATE_TO_HUMAN", "severity": "Medium", "error": str(e)}
         
     return {"llm_recommendation": llm_out}
 
 def node_validate_evidence(state: GraphState):
     # Never blindly trust the LLM. We validate the evidence.
     rec = state.get("llm_recommendation", {})
-    severity = rec.get("severity", "Info")
+    action = rec.get("action", "LOG_AND_MONITOR")
     
-    if severity in ["High", "Critical"]:
-        status = "Requires manual authorization (Privileged action blocked)"
+    if action in ["BLOCK_IP", "ISOLATE_HOST", "KILL_PROCESS", "DISABLE_ACCOUNT"]:
+        status = f"Action {action} requires policy authorization"
+    elif action == "ESCALATE_TO_HUMAN":
+        status = "Requires manual investigation"
     else:
         status = "Evidence validated (Low impact)"
         
@@ -71,11 +82,14 @@ def node_risk_policy(state: GraphState):
     return {"risk_score": score}
 
 def node_decision(state: GraphState):
-    score = state.get("risk_score", 0)
-    if score >= 80:
+    valid_actions = {"LOG_AND_MONITOR", "ESCALATE_TO_HUMAN", "BLOCK_IP", "ISOLATE_HOST", "KILL_PROCESS", "DISABLE_ACCOUNT"}
+    action = state.get("llm_recommendation", {}).get("action", "")
+    
+    if action not in valid_actions:
         decision = "ESCALATE_TO_HUMAN"
     else:
-        decision = "LOG_AND_MONITOR"
+        decision = action
+        
     return {"final_decision": decision}
 
 def build_graph():

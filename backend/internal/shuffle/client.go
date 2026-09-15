@@ -22,7 +22,7 @@ func NewClient(webhookURL string) *Client {
 	apiURL := os.Getenv("SAE_SHUFFLE_API_URL")
 	authToken := os.Getenv("SAE_SHUFFLE_AUTH_TOKEN")
 	workflowID := os.Getenv("SAE_SHUFFLE_WORKFLOW_ID")
-	
+
 	return &Client{
 		WebhookURL: webhookURL,
 		APIURL:     apiURL,
@@ -66,6 +66,9 @@ func (c *Client) ExecuteWorkflow(ctx context.Context, payload ActionPayload) (st
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.AuthToken)
+	}
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {

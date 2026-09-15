@@ -1,0 +1,15 @@
+{
+  "activity_name": "Authentication Event",
+  "category_name": "Authentication",
+  "class_name": "Auth",
+  "severity_id": 3,
+  "severity": "High",
+  "status_id": 2,
+  "status": "Failure",
+  "time": 1726055555,
+  "observables": [
+    {"name": "user_name", "value": "admin", "type_id": 1},
+    {"name": "src_ip", "value": "192.168.1.100", "type_id": 2}
+  ],
+  "message": "Failed ssh login attempt (1/150)"
+}

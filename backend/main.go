@@ -23,9 +23,10 @@ import (
 	"sae-core/internal/suricata"
 	"sae-core/internal/thehive"
 	"sae-core/internal/trivy"
+	"sae-core/internal/verification"
 	"sae-core/internal/wazuh"
 	"sae-core/internal/zeek"
-	
+
 	"github.com/google/uuid"
 )
 
@@ -48,7 +49,9 @@ func main() {
 	}
 	thehiveURL := "http://localhost:9000"
 	cortexURL := "http://localhost:9001"
-	eng := engine.NewEngine(store, shuffleWebhook, thehiveURL, cortexURL)
+	
+	verifier := verification.NewLocalTestVerifier()
+	eng := engine.NewEngine(store, shuffleWebhook, thehiveURL, cortexURL, verifier)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	

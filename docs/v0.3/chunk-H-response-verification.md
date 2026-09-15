@@ -4,10 +4,10 @@
 Verify Shuffle webhook execution.
 
 ## 2. Inspection & Test
-Response failure writes OCSF failures natively into Postgres.
+Response failure writes OCSF failures natively into Postgres. Successful closure loops are not natively verified back from Shuffle yet.
 
 ## 3. Status
-**VERIFIED**
+**PARTIAL**
 
 ## 4. Evidence
-Failures trigger native \Response Execution Failed\ events in telemetry.
+Failed response handling does not equate to successful response verification. Full closed-loop verification is pending.

@@ -1,0 +1,1 @@
+{"event_id":"zeek-1","activity_name":"Zeek Connection established","severity":"Low","message":"Inbound connection from 198.51.100.22","observables":[{"type":"IP","value":"198.51.100.22"}]}

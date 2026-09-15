@@ -21,7 +21,7 @@ type Storage struct {
 func InitStorage() (*Storage, error) {
 	pgDSN := os.Getenv("SAE_PG_DSN")
 	if pgDSN == "" {
-		pgDSN = "postgres://sae:changeme_dev_only@172.25.216.143:5432/sae_db?sslmode=disable"
+		pgDSN = "postgres://sae:changeme_dev_only@localhost:5432/sae_db?sslmode=disable"
 	}
 	pgDB, err := sql.Open("postgres", pgDSN)
 	if err != nil {
@@ -73,7 +73,7 @@ func InitStorage() (*Storage, error) {
 
 	redisAddr := os.Getenv("SAE_REDIS_ADDR")
 	if redisAddr == "" {
-		redisAddr = "172.25.216.143:6379"
+		redisAddr = "localhost:6379"
 	}
 	rdb := redis.NewClient(&redis.Options{
 		Addr: redisAddr,

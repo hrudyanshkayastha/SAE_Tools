@@ -1,0 +1,1 @@
+{"event_id":"wazuh-attack-1","activity_name":"Multiple SSH authentication failures","severity":"High","message":"150 failed SSH authentication attempts from 203.0.113.45","observables":[{"type":"IP","value":"203.0.113.45"}]}

@@ -10,7 +10,7 @@ import (
 )
 
 func TestCorrelation_MultiSourceSameTarget(t *testing.T) {
-	eng := NewEngine(&storage.Storage{}, "http://mock", "http://mock", "http://mock")
+	eng := NewEngine(&storage.Storage{}, "http://mock", "http://mock", "http://mock", nil)
 	ctx := context.Background()
 
 	// 1. Wazuh event
@@ -41,7 +41,7 @@ func TestCorrelation_MultiSourceSameTarget(t *testing.T) {
 }
 
 func TestCorrelation_DifferentTargets(t *testing.T) {
-	eng := NewEngine(&storage.Storage{}, "http://mock", "http://mock", "http://mock")
+	eng := NewEngine(&storage.Storage{}, "http://mock", "http://mock", "http://mock", nil)
 	ctx := context.Background()
 
 	eng.correlate(ctx, models.OCSFFinding{
@@ -62,7 +62,7 @@ func TestCorrelation_DifferentTargets(t *testing.T) {
 }
 
 func TestCorrelation_TemporalWindow(t *testing.T) {
-	eng := NewEngine(&storage.Storage{}, "http://mock", "http://mock", "http://mock")
+	eng := NewEngine(&storage.Storage{}, "http://mock", "http://mock", "http://mock", nil)
 	ctx := context.Background()
 
 	// First event
@@ -98,7 +98,7 @@ func TestCorrelation_EscalationClear(t *testing.T) {
 	// But triggerAI will fail quickly because the URL/path is blocked or we just mock triggerAI.
 	// Actually, if it calls langgraph, we will see it fail gracefully and then return.
 	// Then it deletes the key.
-	eng := NewEngine(&storage.Storage{}, "http://mock", "http://mock", "http://mock")
+	eng := NewEngine(&storage.Storage{}, "http://mock", "http://mock", "http://mock", nil)
 	ctx := context.Background()
 
 	eng.correlate(ctx, models.OCSFFinding{

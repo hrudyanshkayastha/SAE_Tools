@@ -1,0 +1,1 @@
+{"event_id":"suri-1","activity_name":"Suricata ET DROP Dshield Block Listed Source","severity":"High","message":"Known malicious IP 198.51.100.22 attempted contact","observables":[{"type":"IP","value":"198.51.100.22"}]}

@@ -4,10 +4,10 @@
 Validate LLM output quality.
 
 ## 2. Inspection & Test
-Inspected LangGraph integration. Struct validation blocks unparsed strings.
+Inspected LangGraph integration. Currently relies solely on JSON struct unmarshalling to catch hallucinations.
 
 ## 3. Status
-**VERIFIED**
+**PARTIAL**
 
 ## 4. Evidence
-LLM hallucinations inherently trapped by struct unmarshalling logic.
+JSON/schema validation does not equate to true LLM reasoning or quality validation. True quality validation remains a known gap.

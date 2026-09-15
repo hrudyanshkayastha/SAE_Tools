@@ -9,7 +9,7 @@ import (
 
 func TestEngine_Correlate(t *testing.T) {
 	store := &storage.Storage{}
-	eng := NewEngine(store, "http://mock-webhook", "http://mock-thehive", "http://mock-cortex")
+	eng := NewEngine(store, "http://mock-webhook", "http://mock-thehive", "http://mock-cortex", nil)
 	_ = eng
 
 	// A simple test to verify correlation struct initialization

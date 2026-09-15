@@ -73,7 +73,9 @@ export default function Investigations() {
                 <ArrowRight className="text-gray-500" />
                 <div className="flex-1">
                   <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Response Router Status</p>
-                  <p className="text-sm font-medium text-orange-500">BLOCKED - Orchestrator Unavailable</p>
+                  <p className={`text-sm font-bold ${dec.state === 'VERIFIED' ? 'text-green-500' : dec.state === 'NOT_VERIFIED' ? 'text-red-500' : 'text-yellow-500'}`}>
+                    {dec.state || 'UNKNOWN'}
+                  </p>
                 </div>
               </div>
             </div>

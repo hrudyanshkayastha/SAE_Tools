@@ -12,7 +12,7 @@ import (
 // TEST 1 - OCSF / CORRELATION MICROBENCHMARK
 // Measures deterministic correlation throughput (events/sec) before the AI boundary.
 func BenchmarkEngine_Correlate(b *testing.B) {
-	eng := NewEngine(&storage.Storage{}, "http://mock", "http://mock", "http://mock")
+	eng := NewEngine(&storage.Storage{}, "http://mock", "http://mock", "http://mock", nil)
 	ctx := context.Background()
 
 	b.ResetTimer()
